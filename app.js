@@ -63,10 +63,10 @@
     // ===================== GITHUB PAGES API CONFIGURATION =====================
 // Ganti nilai ini dengan URL deployment Web App Apps Script yang berakhiran /exec.
 // Contoh: https://script.google.com/macros/s/AKfycb.../exec
-const APPS_SCRIPT_API_URL = 'PASTE_APPS_SCRIPT_WEB_APP_EXEC_URL_DI_SINI';
+const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbx9watwIHm5ApwAP0228QFsiJ-8We1i1Vyb4qg0QIlwzT6hVMq3tJ2RJRCm-Y3neN5k/exec';
 
 async function apiRequest(method,args){
-  if(!APPS_SCRIPT_API_URL || APPS_SCRIPT_API_URL.indexOf('https://script.google.com/macros/s/AKfycbx9watwIHm5ApwAP0228QFsiJ-8We1i1Vyb4qg0QIlwzT6hVMq3tJ2RJRCm-Y3neN5k/exec') !== -1){
+  if(!APPS_SCRIPT_API_URL || APPS_SCRIPT_API_URL.indexOf('PASTE_APPS_SCRIPT') !== -1){
     throw new Error('API Apps Script belum dikonfigurasi. Edit APPS_SCRIPT_API_URL pada app.js.');
   }
   const response=await fetch(APPS_SCRIPT_API_URL,{
