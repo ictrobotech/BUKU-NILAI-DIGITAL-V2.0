@@ -63,7 +63,7 @@
     // ===================== GITHUB PAGES API CONFIGURATION =====================
 // Ganti nilai ini dengan URL deployment Web App Apps Script yang berakhiran /exec.
 // Contoh: https://script.google.com/macros/s/AKfycb.../exec
-const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbx9watwIHm5ApwAP0228QFsiJ-8We1i1Vyb4qg0QIlwzT6hVMq3tJ2RJRCm-Y3neN5k/exec';
+const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbywiauJrieS1DPzHBVxbEK-xOFzNhkXjV44PvZ7L8wMDGTGoIGqq-CkvCfC2lXkwD0-/exec';
 
 async function apiRequest(method,args){
   if(!APPS_SCRIPT_API_URL || APPS_SCRIPT_API_URL.indexOf('PASTE_APPS_SCRIPT') !== -1){
