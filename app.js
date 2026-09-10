@@ -60,27 +60,12 @@
     function toast(message,type){const el=document.createElement('div');el.className=`toast ${type||''}`;el.innerHTML=`${svg(type==='error'?'alert':type==='success'?'check':'info')}<span>${escapeHtml(message)}</span>`;$('#toastStack').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateX(15px)';setTimeout(()=>el.remove(),250);},4300);}
     function messageOf(error){return error&&error.message?error.message:String(error||'Terjadi kesalahan yang tidak diketahui.');}
 
-    // ===================== GITHUB PAGES API CONFIGURATION =====================
-// Ganti nilai ini dengan URL deployment Web App Apps Script yang berakhiran /exec.
-// Contoh: https://script.google.com/macros/s/AKfycb.../exec
-const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbywiauJrieS1DPzHBVxbEK-xOFzNhkXjV44PvZ7L8wMDGTGoIGqq-CkvCfC2lXkwD0-/exec';
-
-async function apiRequest(method,args){
-  if(!APPS_SCRIPT_API_URL || APPS_SCRIPT_API_URL.indexOf('PASTE_APPS_SCRIPT') !== -1){
-    throw new Error('API Apps Script belum dikonfigurasi. Edit APPS_SCRIPT_API_URL pada app.js.');
-  }
-  const response=await fetch(APPS_SCRIPT_API_URL,{
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({action:method,args:args||[]}),
-    redirect:'follow'
-  });
-  const raw=await response.text();
-  let payload;
-  try{payload=JSON.parse(raw);}catch(error){throw new Error('Respons API tidak valid. Pastikan APPS_SCRIPT_REST_API.gs sudah dipasang dan Web App dideploy ulang.');}
-  if(!payload.ok)throw new Error(payload.error||'Terjadi kesalahan pada API Apps Script.');
-  return payload.result;
-}
+    // ===================== KONFIGURASI SUPABASE =====================
+// apiRequest(method, args) kini disediakan oleh supabase-adapter.js
+// (isi url + anonKey pada SUPABASE_CONFIG di dalam berkas tersebut).
+// Modul yang wajib dimuat sebelum berkas ini:
+//   xlsx-lite.js        -> pembuat berkas .xlsx di sisi klien
+//   supabase-adapter.js -> jembatan PostgREST/RPC + Supabase Storage
 function callServer(method,args,onSuccess,busyText){
   setBusy(true,busyText||'Memproses data…');
   apiRequest(method,args).then(result=>{setBusy(false);onSuccess(result);}).catch(error=>{setBusy(false);const text=messageOf(error);if(text.indexOf('SESI_BERAKHIR')!==-1){showLogin('Sesi berakhir. Silakan masuk kembali.');}else toast(text,'error');});
@@ -96,13 +81,13 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
     }
     function showSetup(status){$('#authScreen').hidden=false;$('#appShell').classList.add('is-hidden');$('#loginBox').hidden=true;$('#setupBox').hidden=false;$('#setupStatus').textContent=`Lokasi wajib: Google Drive / ${status.requiredParentFolder} / ${status.requiredStorageFolder}.`;}
     function bootstrap(){
-      if(!APPS_SCRIPT_API_URL || APPS_SCRIPT_API_URL.indexOf('PASTE_APPS_SCRIPT') !== -1){
+      if(!window.SupabaseAdapter || !SupabaseAdapter.isConfigured()){
         setBusy(false);
         $('#authScreen').hidden=false;
         $('#appShell').classList.add('is-hidden');
         $('#setupBox').hidden=true;
         $('#loginBox').hidden=false;
-        $('#loginStatus').textContent='Frontend GitHub Pages siap. Admin perlu mengisi APPS_SCRIPT_API_URL pada app.js sebelum aplikasi dapat digunakan.';
+        $('#loginStatus').textContent='Frontend siap. Admin perlu mengisi url dan anonKey pada SUPABASE_CONFIG di supabase-adapter.js sebelum aplikasi digunakan.';
         return;
       }
       callServer('getAppStatus',[],status=>{
