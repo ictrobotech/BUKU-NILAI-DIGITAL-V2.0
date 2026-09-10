@@ -178,7 +178,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function resetApplication(){const password=$('#resetAdminPassword').value;const confirmed=$('#resetConfirm').checked;if(!password||!confirmed){toast('Masukkan kata sandi Pemilik/Admin dan centang konfirmasi reset.','error');return;}if(!confirm('Reset seluruh data murid, nilai, rekap, dan identitas materi? Tindakan ini tidak dapat dibatalkan.'))return;secure('resetApplicationData',[password],data=>{$('#resetAdminPassword').value='';$('#resetConfirm').checked=false;state.activeView='identity';applyData(data);toast('Seluruh data penilaian berhasil direset ke default.','success');},'Mereset seluruh data penilaian…');}
     function aboutInline(text){return escapeHtml(text).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');}
     function shouldUseAboutTemplate(text){const value=String(text||'');return !value.includes('##')&&/Fitur dan Keunggulan Utama/i.test(value)&&/Visi Pengembangan/i.test(value);}
-    function formattedAboutHtml(text){let source=String(text||'').trim()||ABOUT_TEMPLATE;if(shouldUseAboutTemplate(source))source=ABOUT_TEMPLATE;const lines=source.replace(/\r\n?/g,'\n').split('\n');const intro=[];const sections=[];let current=null;lines.forEach(raw=>{const line=raw.trim();if(!line)return;if(/^##\s+/.test(line)){current={title:line.replace(/^##\s+/,''),lines:[]};sections.push(current);}else if(current){current.lines.push(line);}else intro.push(line);});let html=intro.length?`<p class="about-intro">${aboutInline(intro.join(' '))}</p>`:'';sections.forEach(section=>{const isInfo=/informasi sistem/i.test(section.title);const bullets=section.lines.filter(line=>/^[-•]\s+/.test(line)).map(line=>line.replace(/^[-•]\s+/,''));const paragraphs=section.lines.filter(line=>!/^[-•]\s+/.test(line));html+='<section class="about-section"><h3>'+aboutInline(section.title)+'</h3>';if(bullets.length)html+='<ul class="about-feature-list">'+bullets.map(item=>{const split=item.indexOf(':');if(split<0)return '<li>'+aboutInline(item)+'</li>';return '<li style="display:grid;grid-template-columns:var(--bn-about-label,max-content) max-content minmax(0,1fr);column-gap:7px;align-items:baseline">'+aboutInline(item.slice(0,split))+'<span aria-hidden="true">:</span>'+'<span style="text-align:left">'+aboutInline(item.slice(split+1).trim())+'</span>'+'</li>';}).join('')+'</ul>';if(isInfo&&paragraphs.length){html+='<div class="about-system" style="display:grid;grid-template-columns:max-content max-content minmax(0,1fr);column-gap:6px;row-gap:4px;align-items:baseline">'+paragraphs.map(item=>{const split=item.indexOf(':');return split>-1?'<div class="about-system-row" style="display:contents">'+'<b>'+aboutInline(item.slice(0,split).trim())+'</b><span aria-hidden="true">:</span><span>'+aboutInline(item.slice(split+1).trim())+'</span></div>':'<div style="display:contents"><span style="grid-column:1 / -1">'+aboutInline(item)+'</span></div>';}).join('')+'</div>';}else if(paragraphs.length){html+=paragraphs.map(item=>'<p>'+aboutInline(item)+'</p>').join('');}html+='</section>';});return html||'<p class="about-intro">'+aboutInline(source)+'</p>';}
+    function formattedAboutHtml(text){let source=String(text||'').trim()||ABOUT_TEMPLATE;if(shouldUseAboutTemplate(source))source=ABOUT_TEMPLATE;const lines=source.replace(/\r\n?/g,'\n').split('\n');const intro=[];const sections=[];let current=null;lines.forEach(raw=>{const line=raw.trim();if(!line)return;if(/^##\s+/.test(line)){current={title:line.replace(/^##\s+/,''),lines:[]};sections.push(current);}else if(current){current.lines.push(line);}else intro.push(line);});let html=intro.length?`<p class="about-intro">${aboutInline(intro.join(' '))}</p>`:'';sections.forEach(section=>{const isInfo=/informasi sistem/i.test(section.title);const bullets=section.lines.filter(line=>/^[-•]\s+/.test(line)).map(line=>line.replace(/^[-•]\s+/,''));const paragraphs=section.lines.filter(line=>!/^[-•]\s+/.test(line));html+='<section class="about-section"><h3>'+aboutInline(section.title)+'</h3>';if(bullets.length)html+='<ul class="about-feature-list">'+bullets.map(item=>{const split=item.indexOf(':');if(split<0)return '<li>'+aboutInline(item)+'</li>';return '<li style="display:grid;grid-template-columns:min(var(--bn-about-label,12em),45%) max-content minmax(0,1fr);column-gap:7px;align-items:baseline">'+aboutInline(item.slice(0,split))+'<span aria-hidden="true">:</span>'+'<span style="text-align:left">'+aboutInline(item.slice(split+1).trim())+'</span>'+'</li>';}).join('')+'</ul>';if(isInfo&&paragraphs.length){html+='<div class="about-system" style="display:grid;grid-template-columns:max-content max-content minmax(0,1fr);column-gap:6px;row-gap:4px;align-items:baseline">'+paragraphs.map(item=>{const split=item.indexOf(':');return split>-1?'<div class="about-system-row" style="display:contents">'+'<b>'+aboutInline(item.slice(0,split).trim())+'</b><span aria-hidden="true">:</span><span>'+aboutInline(item.slice(split+1).trim())+'</span></div>':'<div style="display:contents"><span style="grid-column:1 / -1">'+aboutInline(item)+'</span></div>';}).join('')+'</div>';}else if(paragraphs.length){html+=paragraphs.map(item=>'<p>'+aboutInline(item)+'</p>').join('');}html+='</section>';});return html||'<p class="about-intro">'+aboutInline(source)+'</p>';}
     // Menyamakan lebar kolom label pada seluruh butir daftar fitur About.
     // Setiap baris adalah grid tersendiri, jadi lebarnya harus dipatok dari label TERPANJANG
     // agar semua titik dua lurus ke bawah dan keterangan yang membungkus tetap sejajar.
@@ -186,12 +186,31 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       if(!container)return;
       const daftar=container.querySelector(".about-feature-list");
       if(!daftar)return;
-      daftar.style.removeProperty("--bn-about-label");
       const label=[...daftar.querySelectorAll("li > strong")];
       if(!label.length)return;
+      daftar.style.removeProperty("--bn-about-label");
+      // Ukur lebar intrinsik tiap label memakai elemen tak terlihat (white-space:nowrap).
+      // Cara ini tidak terpengaruh lebar kolom saat ini — berbeda dengan mengukur langsung,
+      // yang bisa terjebak lingkaran: kolom sempit -> label membungkus -> hasil ukur ikut kecil.
+      const ukur=document.createElement("span");
+      ukur.setAttribute("aria-hidden","true");
+      ukur.style.cssText="position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap;pointer-events:none";
+      daftar.appendChild(ukur);
       let lebar=0;
-      label.forEach(el=>{lebar=Math.max(lebar,el.getBoundingClientRect().width);});
-      if(!lebar){ // About sedang tersembunyi (getBoundingClientRect = 0) → ukur lewat kanvas
+      label.forEach(el=>{
+        const cs=getComputedStyle(el);
+        ukur.style.fontWeight=cs.fontWeight;
+        ukur.style.fontSize=cs.fontSize;
+        ukur.style.fontFamily=cs.fontFamily;
+        ukur.style.fontStyle=cs.fontStyle;
+        ukur.style.letterSpacing=cs.letterSpacing;
+        ukur.textContent=el.textContent;
+        lebar=Math.max(lebar,ukur.getBoundingClientRect().width);
+        // Label juga dibuat rata kiri agar baris kedua tidak melar seperti teks justify.
+        el.style.textAlign="left";
+      });
+      ukur.remove();
+      if(!lebar){ // cadangan: ukur lewat kanvas bila elemen benar-benar tidak dapat diukur
         try{const cs=getComputedStyle(container);const ctx=document.createElement("canvas").getContext("2d");
           ctx.font="700 "+(cs.fontSize||"14px")+" "+(cs.fontFamily||"sans-serif");
           label.forEach(el=>{lebar=Math.max(lebar,ctx.measureText(el.textContent).width);});
