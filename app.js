@@ -47,7 +47,7 @@
     function formatScore(value) { return value===null||typeof value==='undefined'||!Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('id-ID',{minimumFractionDigits:0,maximumFractionDigits:2}); }
     function blankScore(value) { return value===null||typeof value==='undefined'?'':value; }
     function vector(values,length){const source=Array.isArray(values)?values:[];return Array.from({length:Math.max(0,length||0)},(_,i)=>source[i]===null||source[i]===''||typeof source[i]==='undefined'?null:Number(source[i]));}
-    function average(values){const n=(values||[]).filter(v=>Number.isFinite(Number(v))).map(Number);return n.length?round2(n.reduce((a,b)=>a+b,0)/n.length):null;}
+    function average(values){const n=(values||[]).map(v=>typeof v==='string'?v.trim():v).filter(v=>v!==null&&typeof v!=='undefined'&&v!==''&&Number.isFinite(Number(v))).map(Number);return n.length?round2(n.reduce((a,b)=>a+b,0)/n.length):null;}
     function isAdmin(){return state.user && state.user.role==='ADMIN';}
     function isGuru(){return state.user && state.user.role==='GURU';}
     function isWali(){return state.user && state.user.role==='WALI_KELAS';}
@@ -79,7 +79,7 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
     function showLogin(message){
       clearInterval(heartbeatTimer);clearInterval(presenceTimer);state.sessionToken='';state.user=null;sessionStorage.removeItem('bn_untad_session');resetLoginFields();$('#appShell').classList.add('is-hidden');$('#authScreen').hidden=false;$('#setupBox').hidden=true;$('#loginBox').hidden=false;$('#loginStatus').textContent=message||'';$('#loginUsername').focus();
     }
-    function showSetup(status){$('#authScreen').hidden=false;$('#appShell').classList.add('is-hidden');$('#loginBox').hidden=true;$('#setupBox').hidden=false;$('#setupStatus').textContent=`Lokasi wajib: Google Drive / ${status.requiredParentFolder} / ${status.requiredStorageFolder}.`;}
+    function showSetup(status){$('#authScreen').hidden=false;$('#appShell').classList.add('is-hidden');$('#loginBox').hidden=true;$('#setupBox').hidden=false;$('#setupStatus').textContent=`Basis data: ${status.storagePath||'Supabase'} · proyek ${(window.SupabaseAdapter&&SupabaseAdapter.config.url||'').replace(/^https?:\/\//,'').split('.')[0]}.`;}
     function bootstrap(){
       if(!window.SupabaseAdapter || !SupabaseAdapter.isConfigured()){
         setBusy(false);
@@ -98,7 +98,7 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
       },'Memeriksa aplikasi…');
     }
     function login(){const username=$('#loginUsername').value.trim(),password=$('#loginPassword').value;resetLoginFields();if(!username||!password){toast('Username dan kata sandi wajib diisi.','error');return;}callServer('login',[{username,password}],result=>{state.sessionToken=result.sessionToken;sessionStorage.setItem('bn_untad_session',state.sessionToken);callServer('getInitialData',[state.sessionToken],applyData,'Memuat buku nilai…');},'Memverifikasi akun…');}
-    function activate(){const folderUrlOrId=$('#setupFolder').value.trim(),name=$('#setupOwnerName').value.trim(),username=$('#setupUsername').value.trim(),password=$('#setupPassword').value,confirm=$('#setupPasswordConfirm').value;if(!folderUrlOrId||!name||!username||!password){toast('Semua data aktivasi wajib diisi.','error');return;}if(password!==confirm){toast('Ulangi kata sandi harus sama.','error');return;}callServer('initializeApplication',[{folderUrlOrId,owner:{name,username,password}}],result=>{state.sessionToken=result.sessionToken;sessionStorage.setItem('bn_untad_session',state.sessionToken);toast(result.message,'success');callServer('getInitialData',[state.sessionToken],applyData,'Menyiapkan aplikasi…');},'Membuat database di folder BN ONLINE…');}
+    function activate(){const folderUrlOrId=$('#setupFolder').value.trim(),name=$('#setupOwnerName').value.trim(),username=$('#setupUsername').value.trim(),password=$('#setupPassword').value,confirm=$('#setupPasswordConfirm').value;const projectNote=folderUrlOrId;if(!name||!username||!password){toast('Nama pemilik, username, dan kata sandi wajib diisi.','error');return;}void projectNote;if(password!==confirm){toast('Ulangi kata sandi harus sama.','error');return;}callServer('initializeApplication',[{folderUrlOrId,owner:{name,username,password}}],result=>{state.sessionToken=result.sessionToken;sessionStorage.setItem('bn_untad_session',state.sessionToken);toast(result.message,'success');callServer('getInitialData',[state.sessionToken],applyData,'Menyiapkan aplikasi…');},'Membuat akun Pemilik/Admin pada Supabase…');}
     let heartbeatTimer=null, presenceTimer=null;
     function silentServer(method,args,onSuccess){if(!state.sessionToken)return;apiRequest(method,args).then(result=>{if(onSuccess)onSuccess(result);}).catch(()=>{});}
     function startPresenceTimers(){clearInterval(heartbeatTimer);clearInterval(presenceTimer);if(!state.sessionToken)return;heartbeatTimer=setInterval(()=>silentServer('heartbeat',[state.sessionToken]),60000);if(isAdmin())presenceTimer=setInterval(()=>silentServer('getUserPresence',[state.sessionToken],result=>{state.users=result.users||state.users;if(!state.editUserId)renderUsers();renderHomeroomManager();}),30000);}

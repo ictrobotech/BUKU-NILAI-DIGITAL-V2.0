@@ -128,13 +128,15 @@
   // =========================================================================
   // 3. Latar login -> Supabase Storage
   // =========================================================================
-  function dataUriToBlob(dataUri) {
+  // Body dikirim sebagai byte mentah (Uint8Array): diterima semua peramban dan
+  // tidak bergantung pada implementasi Blob lingkungan tempat skrip berjalan.
+  function dataUriToBytes(dataUri) {
     const match = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(dataUri || '');
     if (!match) throw new Error('Format gambar latar login tidak dikenali.');
     const binary = atob(match[2].replace(/\s/g, ''));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return { blob: new Blob([bytes], { type: match[1] }), type: match[1] };
+    return { bytes: bytes, type: match[1] };
   }
 
   function extensionFor(mimeType) {
@@ -143,7 +145,7 @@
     return 'jpg';
   }
 
-  function uploadToStorage(bucket, path, blob) {
+  function uploadToStorage(bucket, path, bytes, contentType) {
     const token = currentToken();
     return http(SUPABASE_CONFIG.url + '/storage/v1/object/' + bucket + '/' + path, {
       method: 'POST',
@@ -151,10 +153,10 @@
         'apikey': SUPABASE_CONFIG.anonKey,
         'Authorization': 'Bearer ' + SUPABASE_CONFIG.anonKey,
         'x-app-token': token,
-        'Content-Type': blob.type || 'application/octet-stream',
+        'Content-Type': contentType || 'application/octet-stream',
         'x-upsert': 'true'
       },
-      body: blob
+      body: bytes
     }).then(function (response) {
       return response.text().then(function (raw) {
         if (!response.ok) {
@@ -171,10 +173,10 @@
     const token = args[0];
 
     if (payload.loginBackgroundDataUri) {
-      const parsed = dataUriToBlob(payload.loginBackgroundDataUri);
+      const parsed = dataUriToBytes(payload.loginBackgroundDataUri);
       const path = 'latar-login-' + Date.now() + '-' +
         Math.random().toString(36).slice(2, 8) + '.' + extensionFor(parsed.type);
-      return uploadToStorage(SUPABASE_CONFIG.loginBackgroundBucket, path, parsed.blob)
+      return uploadToStorage(SUPABASE_CONFIG.loginBackgroundBucket, path, parsed.bytes, parsed.type)
         .then(function (publicUrl) {
           delete payload.loginBackgroundDataUri;
           payload.loginBackgroundUrl = publicUrl;
@@ -249,7 +251,7 @@
 
       if (SUPABASE_CONFIG.archiveExports) {
         const folder = (SUPABASE_CONFIG.exportPrefix || 'exports') + '/' + result.fileName;
-        uploadToStorage(SUPABASE_CONFIG.exportBucket, folder, new Blob([bytes], { type: MIME_XLSX }))
+        uploadToStorage(SUPABASE_CONFIG.exportBucket, folder, bytes, MIME_XLSX)
           .catch(function () { /* arsip opsional: kegagalan tidak menghentikan unduhan */ });
       }
 
