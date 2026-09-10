@@ -220,7 +220,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     }
 
     function renderAbout(){const display=$('#aboutDisplay');if(!display)return;const text=state.aboutText||ABOUT_TEMPLATE;display.innerHTML=formattedAboutHtml(text);alignAboutLabels(display);}
-    function applyAboutTemplate(){const editor=$('#aboutText');editor.value=ABOUT_TEMPLATE;$('#aboutDisplay').innerHTML=formattedAboutHtml(ABOUT_TEMPLATE);alignAboutLabels($('#aboutDisplay'));toast('Template About rapi diterapkan. Klik Simpan informasi About untuk menyimpan.','success');}
+    function applyAboutTemplate(){const editor=$('#aboutText');editor.value=ABOUT_TEMPLATE;$('#aboutDisplay').innerHTML=formattedAboutHtml(ABOUT_TEMPLATE);alignAboutLabels($('#aboutDisplay'));toast('Template About rapi diterapkan. Klik Simpan Informasi About untuk menyimpan.','success');}
     function saveAbout(){const editor=$('#aboutText');const text=editor.value.trim();secure('saveAbout',[text],result=>{state.aboutText=result.aboutText;editor.value='';renderAbout();toast('Informasi About berhasil disimpan dan kolom deskripsi dikosongkan.','success');},'Menyimpan informasi About…');}
 
     // ---------- Data murid ----------
