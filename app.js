@@ -60,6 +60,195 @@
     function toast(message,type){const el=document.createElement('div');el.className=`toast ${type||''}`;el.innerHTML=`${svg(type==='error'?'alert':type==='success'?'check':'info')}<span>${escapeHtml(message)}</span>`;$('#toastStack').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateX(15px)';setTimeout(()=>el.remove(),250);},4300);}
     function messageOf(error){return error&&error.message?error.message:String(error||'Terjadi kesalahan yang tidak diketahui.');}
 
+    // ===================== MODAL KONFIRMASI MODERN (pengganti confirm bawaan peramban) =====================
+    // Revisi tampilan 26: dialog konfirmasi tampil di tengah layar dengan latar redup.
+    // Dipakai untuk: hapus satu murid, hapus massal (kelas aktif / kelas tertentu / semua
+    // kelas), dan peringatan perpindahan kelas saat masih ada perubahan yang belum disimpan.
+    let studentsDirty=false;
+    let bnModalKeyHandler=null;
+    function injectModalStyles(){
+      if(document.getElementById('bn-modal-style'))return;
+      const style=document.createElement('style');style.id='bn-modal-style';
+      style.textContent=[
+        '.bn-modal-backdrop{position:fixed;inset:0;background:rgba(10,16,32,.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:9998;animation:bnModalFade .18s ease-out}',
+        '.bn-modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;width:min(480px,calc(100vw - 28px));max-height:min(86vh,660px);overflow:auto;background:#fff;color:#1d2740;border-radius:20px;box-shadow:0 24px 70px rgba(4,10,30,.38);padding:24px 24px 20px;animation:bnModalPop .2s cubic-bezier(.2,.9,.3,1.15);font-family:inherit}',
+        '.bn-modal h3{margin:12px 0 6px;font-size:19px;line-height:1.3;color:#0f1a3d}',
+        '.bn-modal-message{font-size:14px;line-height:1.55;color:#43506e}',
+        '.bn-modal-message p{margin:6px 0}',
+        '.bn-modal-icon{width:52px;height:52px;border-radius:16px;display:grid;place-items:center}',
+        '.bn-modal-icon svg{width:26px;height:26px;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}',
+        '.bn-modal-icon.danger{background:#fdecef}.bn-modal-icon.danger svg{stroke:#c2243a}',
+        '.bn-modal-icon.warning{background:#fdf3e4}.bn-modal-icon.warning svg{stroke:#b26a08}',
+        '.bn-modal-icon.info{background:#eaf0fd}.bn-modal-icon.info svg{stroke:#123e9a}',
+        '.bn-modal-warn{margin-top:10px;padding:10px 12px;border-radius:10px;background:#fff5f6;border:1px solid #f3ccd3;color:#8f2b3c;font-size:13px}',
+        '.bn-modal-option,.bn-modal-check{display:flex;gap:10px;align-items:flex-start;margin-top:10px;padding:11px 12px;border:1px solid #dfe6f3;border-radius:12px;cursor:pointer;font-size:14px;color:#24304d;transition:border-color .15s,background .15s}',
+        '.bn-modal-option:hover,.bn-modal-check:hover{border-color:#9db4e8;background:#f7faff}',
+        '.bn-modal-option input,.bn-modal-check input{margin-top:3px;width:16px;height:16px;accent-color:#c2243a;flex:none;cursor:pointer}',
+        '.bn-modal-option small{display:block;color:#7a86a3;font-size:12px;margin-top:2px}',
+        '.bn-modal-select{margin-top:10px;width:100%;padding:10px 12px;border:1px solid #d5deee;border-radius:10px;font-size:14px;background:#fbfcff;color:#1d2740;font-weight:600}',
+        '.bn-modal-select:disabled{opacity:.55;background:#f2f4f9;cursor:not-allowed}',
+        '.bn-modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;flex-wrap:wrap}',
+        '.bn-modal-button{border:0;border-radius:12px;padding:11px 18px;font-size:14px;font-weight:700;cursor:pointer;min-height:42px;transition:transform .12s,filter .15s,background .15s;font-family:inherit}',
+        '.bn-modal-button:active{transform:translateY(1px)}',
+        '.bn-modal-button.ghost{background:#eef2f9;color:#33405e}.bn-modal-button.ghost:hover{background:#e2e9f4}',
+        '.bn-modal-button.danger{background:linear-gradient(135deg,#d63a52,#a81f36);color:#fff;box-shadow:0 8px 20px rgba(178,32,56,.32)}',
+        '.bn-modal-button.danger:hover{filter:brightness(1.08)}',
+        '.bn-modal-button.danger:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}',
+        '.bn-modal-button.primary{background:linear-gradient(135deg,#1641b0,#0b1f6b);color:#fff;box-shadow:0 8px 20px rgba(11,31,107,.28)}',
+        '.bn-modal-button.primary:hover{filter:brightness(1.12)}',
+        '@keyframes bnModalFade{from{opacity:0}to{opacity:1}}',
+        '@keyframes bnModalPop{from{opacity:0;transform:translate(-50%,-46%) scale(.94)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}',
+        '@media (max-width:520px){.bn-modal{padding:20px 16px 16px}.bn-modal-actions{flex-direction:column-reverse}.bn-modal-actions .bn-modal-button{width:100%}}'
+      ].join('');
+      document.head.appendChild(style);
+    }
+    function closeAppModal(){
+      const host=document.getElementById('bnModalHost');
+      if(host)host.innerHTML='';
+      if(bnModalKeyHandler){document.removeEventListener('keydown',bnModalKeyHandler);bnModalKeyHandler=null;}
+    }
+    function openAppModal(options){
+      const opt=options||{};
+      injectModalStyles();
+      let host=document.getElementById('bnModalHost');
+      if(!host){host=document.createElement('div');host.id='bnModalHost';document.body.appendChild(host);}
+      const tone=opt.tone==='danger'?'danger':opt.tone==='warning'?'warning':'info';
+      const iconSvg=tone==='danger'
+        ?'<svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>'
+        :svg(tone==='warning'?'alert':'info');
+      host.innerHTML=`<div class="bn-modal-backdrop"></div><div class="bn-modal" role="alertdialog" aria-modal="true" aria-labelledby="bnModalTitle" aria-describedby="bnModalText"><div class="bn-modal-icon ${tone}">${iconSvg}</div><h3 id="bnModalTitle">${escapeHtml(opt.title||'Konfirmasi')}</h3><div class="bn-modal-message" id="bnModalText">${opt.html||''}</div><div class="bn-modal-actions"><button type="button" class="bn-modal-button ghost" data-modal-cancel>${escapeHtml(opt.cancelText||'Batal')}</button><button type="button" class="bn-modal-button ${tone==='danger'?'danger':'primary'}" data-modal-confirm>${escapeHtml(opt.confirmText||'Ya, Lanjutkan')}</button></div></div>`;
+      host.querySelector('[data-modal-cancel]').addEventListener('click',closeAppModal);
+      host.querySelector('.bn-modal-backdrop').addEventListener('click',closeAppModal);
+      host.querySelector('[data-modal-confirm]').addEventListener('click',()=>{
+        // false = validasi pada onConfirm gagal, dialog sengaja tetap terbuka.
+        if(opt.onConfirm&&opt.onConfirm()===false)return;
+        closeAppModal();
+      });
+      if(opt.onChange)host.addEventListener('change',event=>opt.onChange(event,host));
+      bnModalKeyHandler=event=>{if(event.key==='Escape')closeAppModal();};
+      document.addEventListener('keydown',bnModalKeyHandler);
+      host.querySelector('[data-modal-confirm]').focus();
+    }
+
+    // ---------- Hapus satu murid (dialog modern, menggantikan confirm() bawaan) ----------
+    function confirmRemoveStudent(student){
+      const className=student.className||(state.context&&state.context.className)||'-';
+      openAppModal({
+        tone:'danger',
+        title:'Hapus Data Murid?',
+        confirmText:'Ya, Hapus',
+        cancelText:'Batal',
+        html:`<p>Murid <b>${escapeHtml(student.name)}</b> akan dihapus dari kelas <b>${escapeHtml(className)}</b>.</p><div class="bn-modal-warn">Nilai formatif/sumatif yang terkait akan terhapus setelah data disimpan.</div>`,
+        onConfirm:()=>{
+          state.students=state.students.filter(item=>item.id!==student.id);
+          studentsDirty=true;
+          renderStudents();
+          toast('Murid dihapus dari daftar sementara. Klik Simpan Data Murid untuk menerapkan.','success');
+        }
+      });
+    }
+
+    // ---------- Hapus data murid massal: kelas aktif / kelas tertentu / semua kelas ----------
+    // Deleksi memakai alur resmi: getContextData per kelas lalu saveStudents dengan daftar
+    // murid kosong (server menghapus sisa murid kelas tersebut; nilai ikut terhapus oleh FK).
+    function deleteClassStudentsFlow(classList,restoreClass,single){
+      let index=0;
+      const total=classList.length;
+      const doneMessage=single?`Data murid kelas ${classList[0]} berhasil dihapus.`:`Data murid ${total} kelas berhasil dihapus.`;
+      const step=()=>{
+        if(index>=total){
+          secure('getContextData',[{...currentSelection(),className:restoreClass}],data=>{
+            applyData(data);
+            studentsDirty=false;
+            toast(doneMessage,'success');
+          },'Memuat ulang data kelas…');
+          return;
+        }
+        const className=classList[index];index+=1;
+        const progress=`Menghapus data murid kelas ${className} (${index}/${total})…`;
+        secure('getContextData',[{...currentSelection(),className}],data=>{
+          applyData(data);
+          state.students=[];
+          secure('saveStudents',[{...currentSelection(),students:[]}],fresh=>{applyData(fresh);step();},progress);
+        },progress);
+      };
+      step();
+    }
+    function openBulkDeleteStudentsModal(){
+      if(!isAdmin())return;
+      if(!state.context){toast('Muat konteks penilaian terlebih dahulu.','error');return;}
+      const classes=state.classProfiles.map(profile=>profile.className);
+      if(!classes.length){toast('Daftar kelas belum tersedia.','error');return;}
+      const active=state.context.className;
+      const original=active;
+      const options=classes.map(name=>`<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join('');
+      openAppModal({
+        tone:'danger',
+        title:'Hapus Data Murid',
+        confirmText:'Hapus Sekarang',
+        cancelText:'Batal',
+        html:`<p>Pilih cakupan penghapusan data murid beserta nilai terkaitnya.</p>
+      <label class="bn-modal-option"><input type="radio" name="bn-del-scope" value="active" checked><span><b>Kelas aktif saja</b><small>${escapeHtml(classLabel(active))}</small></span></label>
+      <label class="bn-modal-option"><input type="radio" name="bn-del-scope" value="pick"><span><b>Kelas tertentu</b><small>Pilih satu kelas pada daftar di bawah</small></span></label>
+      <select id="bnDelClass" class="bn-modal-select" disabled>${options}</select>
+      <label class="bn-modal-option"><input type="radio" name="bn-del-scope" value="all"><span><b>Semua kelas</b><small>Seluruh data murid pada ${classes.length} kelas dihapus</small></span></label>
+      <label class="bn-modal-check"><input type="checkbox" id="bnDelAck"><span>Saya memahami data murid dan nilai terkait akan dihapus permanen.</span></label>`,
+        onChange:event=>{
+          if(event.target&&event.target.name==='bn-del-scope'){
+            const picker=document.getElementById('bnDelClass');
+            if(picker)picker.disabled=event.target.value!=='pick';
+          }
+        },
+        onConfirm:()=>{
+          const ack=document.getElementById('bnDelAck');
+          if(!ack||!ack.checked){toast('Centang konfirmasi penghapusan terlebih dahulu.','error');return false;}
+          const checked=document.querySelector('input[name="bn-del-scope"]:checked');
+          const scope=checked?checked.value:'active';
+          const picker=document.getElementById('bnDelClass');
+          const targetClass=picker?picker.value:'';
+          if(scope==='pick'&&!targetClass){toast('Pilih kelas yang akan dihapus datanya.','error');return false;}
+          studentsDirty=false;
+          if(scope==='active')deleteClassStudentsFlow([active],original,true);
+          else if(scope==='pick')deleteClassStudentsFlow([targetClass],original,true);
+          else deleteClassStudentsFlow(classes.slice(),original,false);
+        }
+      });
+    }
+
+    // ---------- Pemilih kelas pada Data Murid ----------
+    // Keterangan "Data kelas aktif: …" tetap tampil apa adanya; daftar murid yang diinput
+    // menyesuaikan kelas yang dipilih pada kotak ini.
+    function renderStudentsClassPicker(){
+      const select=$('#studentsClassSelect');
+      if(!select||!state.context)return;
+      renderClassOptions(select,state.context.className,false);
+      select.value=state.context.className||'';
+    }
+    function switchStudentsClass(){
+      const select=$('#studentsClassSelect');
+      const target=select?select.value:'';
+      if(!target||!state.context||target===state.context.className)return;
+      const move=()=>secure('getContextData',[{...currentSelection(),className:target}],data=>{
+        studentsDirty=false;
+        applyData(data);
+        toast('Kelas aktif: '+target,'success');
+      },'Memuat data murid…');
+      if(studentsDirty){
+        select.value=state.context.className;
+        openAppModal({
+          tone:'warning',
+          title:'Ada Perubahan Belum Disimpan',
+          confirmText:'Buang & Beralih',
+          cancelText:'Batal',
+          html:`<p>Perubahan data murid di <b>${escapeHtml(state.context.className)}</b> belum disimpan. Beralih ke <b>${escapeHtml(target)}</b> akan membuang perubahan tersebut.</p>`,
+          onConfirm:()=>{select.value=target;move();}
+        });
+        return;
+      }
+      move();
+    }
+
+
     // ===================== KONFIGURASI SUPABASE =====================
 // apiRequest(method, args) kini disediakan oleh supabase-adapter.js
 // (isi url + anonKey pada SUPABASE_CONFIG di dalam berkas tersebut).
@@ -224,13 +413,13 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function saveAbout(){const editor=$('#aboutText');const text=editor.value.trim();secure('saveAbout',[text],result=>{state.aboutText=result.aboutText;editor.value='';renderAbout();toast('Informasi About berhasil disimpan dan kolom deskripsi dikosongkan.','success');},'Menyimpan informasi About…');}
 
     // ---------- Data murid ----------
-    function renderStudents(){const body=$('#studentsTableBody');$('#studentsClassLabel').textContent=state.context?classLabel(state.context.className):'—';if(!state.students.length){body.innerHTML=`<tr><td colspan="4"><div class="empty-state">${svg('users')}<b>Belum ada data murid</b><span>Tambahkan nama murid pada kelas aktif.</span></div></td></tr>`;return;}body.innerHTML=state.students.map((student,index)=>`<tr><td class="center">${index+1}</td><td><input class="cell-input student-name-input" data-student-id="${escapeAttr(student.id)}" maxlength="120" value="${escapeAttr(student.name)}"></td><td>${escapeHtml(student.className)}</td><td class="center"><span class="student-order-actions"><button class="tiny-icon move" type="button" data-move-student="${escapeAttr(student.id)}" data-move-direction="up" title="Naikkan urutan" ${index===0?'disabled':''}><svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"></path></svg></button><button class="tiny-icon move" type="button" data-move-student="${escapeAttr(student.id)}" data-move-direction="down" title="Turunkan urutan" ${index===state.students.length-1?'disabled':''}><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></button><button class="tiny-icon" type="button" data-remove-student="${escapeAttr(student.id)}" title="Hapus murid"><svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path></svg></button></span></td></tr>`).join('');}
+    function renderStudents(){const body=$('#studentsTableBody');$('#studentsClassLabel').textContent=state.context?classLabel(state.context.className):'—';renderStudentsClassPicker();if(!state.students.length){body.innerHTML=`<tr><td colspan="4"><div class="empty-state">${svg('users')}<b>Belum ada data murid</b><span>Tambahkan nama murid pada kelas aktif.</span></div></td></tr>`;return;}body.innerHTML=state.students.map((student,index)=>`<tr><td class="center">${index+1}</td><td><input class="cell-input student-name-input" data-student-id="${escapeAttr(student.id)}" maxlength="120" value="${escapeAttr(student.name)}"></td><td>${escapeHtml(student.className)}</td><td class="center"><span class="student-order-actions"><button class="tiny-icon move" type="button" data-move-student="${escapeAttr(student.id)}" data-move-direction="up" title="Naikkan urutan" ${index===0?'disabled':''}><svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"></path></svg></button><button class="tiny-icon move" type="button" data-move-student="${escapeAttr(student.id)}" data-move-direction="down" title="Turunkan urutan" ${index===state.students.length-1?'disabled':''}><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></button><button class="tiny-icon" type="button" data-remove-student="${escapeAttr(student.id)}" title="Hapus murid"><svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path></svg></button></span></td></tr>`).join('');}
     function temporaryId(){return `tmp-${Date.now()}-${Math.random().toString(36).slice(2,9)}`;}
-    function addStudent(name){const clean=String(name||'').trim();if(!clean){toast('Tuliskan nama murid terlebih dahulu.','error');return false;}state.students.push({id:temporaryId(),name:clean,className:state.context.className});renderStudents();return true;}
+    function addStudent(name){const clean=String(name||'').trim();if(!clean){toast('Tuliskan nama murid terlebih dahulu.','error');return false;}state.students.push({id:temporaryId(),name:clean,className:state.context.className});studentsDirty=true;renderStudents();return true;}
     function addOneStudent(){const input=$('#singleStudentName');if(addStudent(input.value)){input.value='';input.focus();toast('Nama ditambahkan. Klik Simpan Data Murid untuk menyimpan.','success');}}
     function addBulkStudents(){const area=$('#bulkStudentNames');const names=area.value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);if(!names.length){toast('Tuliskan minimal satu nama.','error');return;}names.forEach(addStudent);area.value='';renderStudents();toast(`${names.length} nama ditambahkan. Klik Simpan Data Murid untuk menyimpan.`,'success');}
     function syncStudentInputs(){const names={};$$('.student-name-input').forEach(input=>{names[input.dataset.studentId]=input.value.trim();});state.students=state.students.map(s=>({...s,name:names[s.id]??s.name})).filter(s=>s.name);}
-    function saveStudents(){syncStudentInputs();secure('saveStudents',[{...currentSelection(),students:state.students}],data=>{applyData(data);toast('Data murid berhasil disimpan.','success');},'Menyimpan data murid…');}
+    function saveStudents(){syncStudentInputs();secure('saveStudents',[{...currentSelection(),students:state.students}],data=>{applyData(data);studentsDirty=false;toast('Data murid berhasil disimpan.','success');},'Menyimpan data murid…');}
     // ---------- Nilai formatif dan sumatif ----------
     function scoreScrollControls(kind,label){return `<div class="score-scroll-toolbar"><div class="score-scroll-caption"><b>Geser tabel ${escapeHtml(label)}</b><span>Gunakan tombol atau slider di atas ini; tidak perlu mencari scrollbar di bawah.</span></div><div class="score-scroll-actions"><button class="scroll-shift-button" type="button" data-score-scroll-shift="${kind}" data-scroll-direction="-1" title="Geser ke kiri"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button><button class="scroll-shift-button" type="button" data-score-scroll-shift="${kind}" data-scroll-direction="1" title="Geser ke kanan"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></svg></button></div><label class="score-range-wrap"><span class="score-range-label">Slider horizontal</span><input class="score-range-slider" data-score-range="${kind}" type="range" min="0" max="0" value="0" aria-label="Slider horizontal tabel ${escapeAttr(label)}"></label></div>`;}
     function setupScoreScroll(kind,root){const slider=$(`[data-score-range="${kind}"]`,root),shell=$(`[data-score-scroll-body="${kind}"]`,root),table=shell&&$('table',shell);if(!slider||!shell||!table)return;const refresh=()=>{const max=Math.max(0,table.scrollWidth-shell.clientWidth);slider.max=String(max);slider.value=String(Math.min(max,shell.scrollLeft));slider.disabled=max===0;};slider._refreshScoreSlider=refresh;refresh();requestAnimationFrame(refresh);slider.addEventListener('input',()=>{shell.scrollLeft=Number(slider.value);});shell.addEventListener('scroll',()=>{slider.value=String(Math.min(Number(slider.max)||0,shell.scrollLeft));});}
@@ -269,8 +458,8 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       $('#loginButton').addEventListener('click',login);$('#loginPassword').addEventListener('keydown',event=>{if(event.key==='Enter')login();});$('#toggleLoginPassword').addEventListener('click',toggleLoginPassword);$('#activateButton').addEventListener('click',activate);$('#logoToggle').addEventListener('click',toggleSidebar);$('#logoutButton').addEventListener('click',logout);
       $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>showView(button.dataset.viewTarget)));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
       $('#saveHomeroomButton').addEventListener('click',saveHomerooms);$('#unlockHomeroomButton').addEventListener('click',unlockHomerooms);$('#saveAdminCredentialsButton').addEventListener('click',saveAdminCredentials);$('#saveAppearanceButton').addEventListener('click',saveAppearance);$('#clearLoginBackgroundButton').addEventListener('click',clearLoginBackground);$('#resetApplicationButton').addEventListener('click',resetApplication);$('#loginBackgroundFile').addEventListener('change',previewLoginBackgroundFile);$('#appTheme').addEventListener('change',()=>applyAppearance({theme:$('#appTheme').value,loginBackgroundDataUri:state.appearance.loginBackgroundDataUri}));$('#saveAboutButton').addEventListener('click',saveAbout);$('#applyAboutTemplateButton').addEventListener('click',applyAboutTemplate);$('#createUserButton').addEventListener('click',createUser);$('#cancelEditUserButton').addEventListener('click',resetUserEditor);$('#usersTableBody').addEventListener('click',event=>{const edit=event.target.closest('[data-edit-user]');if(edit){beginEditUser(edit.dataset.editUser);return;}const remove=event.target.closest('[data-delete-user]');if(remove){deleteUserAccount(remove.dataset.deleteUser);return;}const button=event.target.closest('[data-toggle-user]');if(button)toggleUser(button);});
-      $('#saveStudentsButton').addEventListener('click',saveStudents);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;if(!confirm(`Hapus ${student.name}? Nilai yang terkait akan dihapus setelah data disimpan.`))return;state.students=state.students.filter(s=>s.id!==student.id);renderStudents();toast('Murid dihapus dari daftar sementara. Klik Simpan Data Murid untuk menerapkan.','success');});
-      $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
+      $('#saveStudentsButton').addEventListener('click',saveStudents);$('#deleteStudentsButton').addEventListener('click',openBulkDeleteStudentsModal);$('#studentsClassSelect').addEventListener('change',switchStudentsClass);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;studentsDirty=true;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;confirmRemoveStudent(student);});
+      $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
       $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialsButton').addEventListener('click',copyWaliMaterials);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
     }
     document.addEventListener('DOMContentLoaded',()=>{bindEvents();if(window.innerWidth<=820){$('#appShell').classList.add('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded','false');}bootstrap();});
