@@ -64,7 +64,7 @@
     // Revisi tampilan 26: dialog konfirmasi tampil di tengah layar dengan latar redup.
     // Dipakai untuk: hapus satu murid, hapus massal (kelas aktif / kelas tertentu / semua
     // kelas), dan peringatan perpindahan kelas saat masih ada perubahan yang belum disimpan.
-    let studentsDirty=false;
+    let studentsDirty=false;let identityDirty=false;
     let bnModalKeyHandler=null;
     function injectModalStyles(){
       if(document.getElementById('bn-modal-style'))return;
@@ -329,6 +329,32 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function objectiveLabel(objective,index){return objective||`Tujuan Pembelajaran ${index+1}`;}
     // Revisi 29: label "Kelas — <wali>" pada Identitas Pembelajaran mengikuti kelas yang dipilih.
     function updateClassHomeroomHint(){const select=$('#className');if(!select)return;const profile=classProfile(select.value);$('#classHomeroomHint').textContent=profile?`— ${profile.homeroomTeacher||'Belum diatur'}`:'';}
+    // Revisi 30: mengganti kelas pada Identitas Pembelajaran langsung memuat konteks kelas
+    // tersebut (lingkup materi + tujuan pembelajaran yang tersimpan) tanpa perlu menekan
+    // tombol Muat Konteks. Bila masih ada isian identitas/materi yang belum disimpan,
+    // tampilkan dialog "Buang & Beralih" agar tidak hilang diam-diam.
+    function handleIdentityClassChange(){
+      const select=$('#className');
+      if(!select||!state.context)return;
+      const target=select.value;
+      updateClassHomeroomHint();
+      if(!target||target===state.context.className)return;
+      const proceed=()=>{identityDirty=false;loadContext();};
+      if(identityDirty){
+        select.value=state.context.className;
+        updateClassHomeroomHint();
+        openAppModal({
+          tone:'warning',
+          title:'Ada Perubahan Belum Disimpan',
+          confirmText:'Buang & Beralih',
+          cancelText:'Batal',
+          html:`<p>Perubahan Identitas / Materi pada <b>${escapeHtml(state.context.className)}</b> belum disimpan. Memuat konteks <b>${escapeHtml(target)}</b> akan membuang perubahan tersebut.</p>`,
+          onConfirm:()=>{select.value=target;updateClassHomeroomHint();proceed();}
+        });
+        return;
+      }
+      proceed();
+    }
     function renderClassOptions(select,selected,includeWali=true){select.innerHTML=state.classProfiles.map(p=>`<option value="${escapeAttr(p.className)}">${escapeHtml(includeWali?classLabel(p.className):p.className)}</option>`).join('');select.value=selected||state.classes[0]||'';}
     function renderSubjectOptions(select,selected,allowedSubjects){const source=Array.isArray(allowedSubjects)&&allowedSubjects.length?allowedSubjects:(state.subjects||[]);const subjects=Array.from(new Set([selected].concat(source).filter(Boolean)));select.innerHTML=subjects.map(subject=>`<option value="${escapeAttr(subject)}">${escapeHtml(subject)}</option>`).join('');select.value=selected||subjects[0]||'';}
     function renderIdentity(){
@@ -348,8 +374,8 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function addMaterial(){const materials=materialsFromDOM();if(materials.length>=12){toast('Maksimal 12 lingkup materi.','error');return;}materials.push({title:'',objectives:['']});renderMaterials(materials);}
     function readContextForm(){const className=$('#className').value,subject=$('#mapelName').value.trim();if(!className||!subject)throw new Error('Kelas dan mata pelajaran wajib diisi.');return {className,subject,semester:$('#semester').value,academicYear:$('#academicYear').value.trim(),teacherName:$('#teacherName').value.trim(),teacherNip:$('#teacherNip').value.trim(),formativeWeight:$('#formativeWeight').value,summativeWeight:$('#summativeWeight').value,materials:materialsFromDOM()};}
     function readSchoolForm(){const nilai=id=>{const el=$(id);const teks=el?el.value.trim():'';return teks||SCHOOL_DEFAULTS[id]||'';};return {schoolName:nilai('#schoolName'),schoolStatus:nilai('#schoolStatus'),address:nilai('#schoolAddress'),village:nilai('#schoolVillage'),district:nilai('#schoolDistrict'),city:nilai('#schoolCity'),province:nilai('#schoolProvince'),defaultSemester:$('#semester').value,defaultAcademicYear:$('#academicYear').value.trim()};}
-    function loadContext(){let selection;try{selection=readContextForm();}catch(error){toast(error.message,'error');return;}secure('getContextData',[selection],applyData,'Memuat konteks kelas dan mapel…');}
-    function saveContext(){let context;try{context=readContextForm();}catch(error){toast(error.message,'error');return;}secure('saveContext',[{school:readSchoolForm(),context}],data=>{applyData(data);toast('Identitas dan materi berhasil disimpan.','success');},'Menyimpan identitas dan materi…');}
+    function loadContext(){let selection;try{selection=readContextForm();}catch(error){toast(error.message,'error');return;}secure('getContextData',[selection],data=>{identityDirty=false;applyData(data);},'Memuat konteks kelas dan mapel…');}
+    function saveContext(){let context;try{context=readContextForm();}catch(error){toast(error.message,'error');return;}secure('saveContext',[{school:readSchoolForm(),context}],data=>{identityDirty=false;applyData(data);toast('Identitas dan materi berhasil disimpan.','success');},'Menyimpan identitas dan materi…');}
 
     function renderHomeroomManager(){const body=$('#homeroomManagerBody');if(!body)return;
       // Revisi 27: baca dulu isi kolom yang sedang diketik agar tidak hilang saat panel
@@ -531,13 +557,13 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function toggleSidebar(){const shell=$('#appShell'),collapsed=shell.classList.toggle('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded',String(!collapsed));}
     function bindEvents(){
       $('#loginButton').addEventListener('click',login);$('#loginPassword').addEventListener('keydown',event=>{if(event.key==='Enter')login();});$('#toggleLoginPassword').addEventListener('click',toggleLoginPassword);$('#activateButton').addEventListener('click',activate);$('#logoToggle').addEventListener('click',toggleSidebar);$('#logoutButton').addEventListener('click',logout);
-      $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>showView(button.dataset.viewTarget)));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#className').addEventListener('change',updateClassHomeroomHint);$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
+      $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>showView(button.dataset.viewTarget)));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#className').addEventListener('change',handleIdentityClassChange);$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
       $('#saveHomeroomButton').addEventListener('click',saveHomerooms);$('#unlockHomeroomButton').addEventListener('click',unlockHomerooms);$('#saveAdminCredentialsButton').addEventListener('click',saveAdminCredentials);$('#saveAppearanceButton').addEventListener('click',saveAppearance);$('#clearLoginBackgroundButton').addEventListener('click',clearLoginBackground);$('#resetApplicationButton').addEventListener('click',resetApplication);$('#loginBackgroundFile').addEventListener('change',previewLoginBackgroundFile);$('#appTheme').addEventListener('change',()=>applyAppearance({theme:$('#appTheme').value,loginBackgroundDataUri:state.appearance.loginBackgroundDataUri}));$('#saveAboutButton').addEventListener('click',saveAbout);$('#applyAboutTemplateButton').addEventListener('click',applyAboutTemplate);$('#createUserButton').addEventListener('click',createUser);$('#cancelEditUserButton').addEventListener('click',resetUserEditor);$('#usersTableBody').addEventListener('click',event=>{const edit=event.target.closest('[data-edit-user]');if(edit){beginEditUser(edit.dataset.editUser);return;}const remove=event.target.closest('[data-delete-user]');if(remove){deleteUserAccount(remove.dataset.deleteUser);return;}const button=event.target.closest('[data-toggle-user]');if(button)toggleUser(button);});
       $('#saveStudentsButton').addEventListener('click',saveStudents);$('#deleteStudentsButton').addEventListener('click',openBulkDeleteStudentsModal);$('#studentsClassSelect').addEventListener('change',switchStudentsClass);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;studentsDirty=true;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;confirmRemoveStudent(student);});
       injectScoreStyles();
       document.addEventListener('keydown',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input.score-input[data-score-kind]'))return;if(event.key==='Enter'){event.preventDefault();moveScoreFocus(input,1);}});
       document.addEventListener('paste',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input.score-input[data-score-kind]'))return;const clip=event.clipboardData||window.clipboardData||null;const text=clip&&typeof clip.getData==='function'?String(clip.getData('text')):'';if(text==='')return;event.preventDefault();applyScorePaste(input,text);});
-      $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
+      $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
       $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialsButton').addEventListener('click',copyWaliMaterials);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
     }
     document.addEventListener('DOMContentLoaded',()=>{bindEvents();if(window.innerWidth<=820){$('#appShell').classList.add('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded','false');}bootstrap();});
