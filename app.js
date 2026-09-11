@@ -461,7 +461,22 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function saveStudents(){syncStudentInputs();secure('saveStudents',[{...currentSelection(),students:state.students}],data=>{applyData(data);studentsDirty=false;toast('Data murid berhasil disimpan.','success');},'Menyimpan data murid…');}
     // ---------- Nilai formatif dan sumatif ----------
     function scoreScrollControls(kind,label){return `<div class="score-scroll-toolbar"><div class="score-scroll-caption"><b>Geser tabel ${escapeHtml(label)}</b><span>Gunakan tombol atau slider di atas ini; tidak perlu mencari scrollbar di bawah.</span></div><div class="score-scroll-actions"><button class="scroll-shift-button" type="button" data-score-scroll-shift="${kind}" data-scroll-direction="-1" title="Geser ke kiri"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button><button class="scroll-shift-button" type="button" data-score-scroll-shift="${kind}" data-scroll-direction="1" title="Geser ke kanan"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></svg></button></div><label class="score-range-wrap"><span class="score-range-label">Slider horizontal</span><input class="score-range-slider" data-score-range="${kind}" type="range" min="0" max="0" value="0" aria-label="Slider horizontal tabel ${escapeAttr(label)}"></label></div>`;}
-    function setupScoreScroll(kind,root){const slider=$(`[data-score-range="${kind}"]`,root),shell=$(`[data-score-scroll-body="${kind}"]`,root),table=shell&&$('table',shell);if(!slider||!shell||!table)return;const refresh=()=>{const max=Math.max(0,table.scrollWidth-shell.clientWidth);slider.max=String(max);slider.value=String(Math.min(max,shell.scrollLeft));slider.disabled=max===0;};slider._refreshScoreSlider=refresh;refresh();requestAnimationFrame(refresh);slider.addEventListener('input',()=>{shell.scrollLeft=Number(slider.value);});shell.addEventListener('scroll',()=>{slider.value=String(Math.min(Number(slider.max)||0,shell.scrollLeft));});}
+    // Revisi 31: lebar minimum tabel nilai DIHITUNG dari jumlah kolom nilai. Sebelumnya CSS
+// mematok min-width 3150px (ukuran konteks lama 40 kolom) sehingga konteks kecil (mis. 4
+// komponen) melar raksasa: kolom NO menyerap seluruh kelebihan lebar dan kolom nilai
+// terdorong keluar layar (tampilan "berantakan"). Kini: NO+NAMA tetap ramping, sisa lebar
+// panel mengisi kolom nilai secara proporsional, dan tabel lebar tetap menggulir horizontal.
+    function applyScoreTableWidth(table,kind){
+      const rows=table.querySelectorAll('tbody tr').length;
+      const inputs=table.querySelectorAll('tbody input.score-input').length;
+      const kolom=rows?inputs/rows:0;
+      const perKomponen=(kind==='formative'||kind==='wali-formative')?76:74;
+      const dasar=55+215+95+30;
+      // Lebar tabel = lebar alami konten; min-width hanya menjaga agar kolom NO/NAMA
+      // tidak pernah menyerap surplus (penyebab tampilan "berantakan" sebelumnya).
+      table.style.minWidth=Math.max(640,Math.min(3150,Math.round(dasar+kolom*perKomponen)))+'px';
+    }
+    function setupScoreScroll(kind,root){const slider=$(`[data-score-range="${kind}"]`,root),shell=$(`[data-score-scroll-body="${kind}"]`,root),table=shell&&$('table',shell);if(!slider||!shell||!table)return;applyScoreTableWidth(table,kind);const refresh=()=>{const max=Math.max(0,table.scrollWidth-shell.clientWidth);slider.max=String(max);slider.value=String(Math.min(max,shell.scrollLeft));slider.disabled=max===0;};slider._refreshScoreSlider=refresh;refresh();requestAnimationFrame(refresh);slider.addEventListener('input',()=>{shell.scrollLeft=Number(slider.value);});shell.addEventListener('scroll',()=>{slider.value=String(Math.min(Number(slider.max)||0,shell.scrollLeft));});}
     function shiftScoreTable(button){const kind=button.dataset.scoreScrollShift;const root=kind==='formative'?$('#formativeTableWrap'):kind==='summative'?$('#summativeTableWrap'):kind==='wali-formative'?$('#waliFormativeWrap'):$('#waliSummativeWrap');const shell=$(`[data-score-scroll-body="${kind}"]`,root);if(!shell)return;const direction=Number(button.dataset.scrollDirection)||1;shell.scrollBy({left:direction*Math.max(300,Math.round(shell.clientWidth*.72)),behavior:'smooth'});}
     function formattedScores(studentId){return vector(state.formative[studentId],state.scoreCounts.formative);}
     function sumScores(studentId){const src=state.summative[studentId]||{};return {asam:vector(src.asam,state.scoreCounts.summative),asas:vector(src.asas,state.scoreCounts.summative)};}
@@ -475,6 +490,8 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       const style=document.createElement('style');style.id='bn-score-style';
       style.textContent=[
         '.score-input{text-align:center!important;appearance:textfield!important;-moz-appearance:textfield!important}',
+        '.score-table th.sticky-no,.score-table td.sticky-no{width:55px;max-width:60px!important}',
+        '.score-table th.sticky-name,.score-table td.sticky-name{max-width:215px!important}',
         '.score-input::-webkit-outer-spin-button,.score-input::-webkit-inner-spin-button{-webkit-appearance:none!important;margin:0!important}'
       ].join('');
       document.head.appendChild(style);
