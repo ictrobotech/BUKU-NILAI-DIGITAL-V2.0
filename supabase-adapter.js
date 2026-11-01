@@ -73,13 +73,17 @@
     return sender(url, options);
   }
 
-  function rpc(action, args) {
+  // Rute dispatcher: 'ext' = bn_api_dispatch_ext (mendukung pengaturan desimal),
+  // 'legacy' = api_dispatch (dipakai bila fungsi baru belum dipasang di Supabase).
+  let dispatchRoute = null;
+
+  function rpcRaw(functionName, action, args) {
     if (!isConfigured()) {
       return Promise.reject(new Error(
         'Supabase belum dikonfigurasi. Isi url dan anonKey pada berkas supabase-adapter.js.'));
     }
 
-    return http(SUPABASE_CONFIG.url + '/rest/v1/rpc/api_dispatch', {
+    return http(SUPABASE_CONFIG.url + '/rest/v1/rpc/' + functionName, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -96,13 +100,35 @@
         if (!response.ok) {
           const message = (payload && (payload.message || payload.error || payload.details)) ||
             ('Permintaan ke server gagal (HTTP ' + response.status + ').');
-          throw new Error(message);
+          const error = new Error(message);
+          error.httpStatus = response.status;
+          error.code = payload && payload.code;
+          throw error;
         }
         if (payload === null) {
           throw new Error('Respons server tidak valid. Periksa koneksi dan konfigurasi Supabase.');
         }
         return payload;
       });
+    });
+  }
+
+  function missingFunction(error) {
+    if (!error) return false;
+    if (error.code === 'PGRST202') return true;
+    if (error.httpStatus === 404) return true;
+    const text = String(error.message || '');
+    return /could not find the function|schema cache|does not exist|tidak ditemukan/i.test(text);
+  }
+
+  function rpc(action, args) {
+    if (dispatchRoute === 'legacy') return rpcRaw('api_dispatch', action, args);
+    if (dispatchRoute === 'ext') return rpcRaw('bn_api_dispatch_ext', action, args);
+    return rpcRaw('bn_api_dispatch_ext', action, args).catch(function (error) {
+      if (!missingFunction(error)) throw error;
+      // Fungsi baru belum ada di Supabase -> pakai jalur lama (aplikasi tetap berjalan).
+      dispatchRoute = 'legacy';
+      return rpcRaw('api_dispatch', action, args);
     });
   }
 

@@ -47,16 +47,24 @@
     // Revisi 33: jumlah desimal rata-rata dapat diatur (2 / 1 / 0) lewat Pengaturan.
     const DECIMAL_MODES=[0,1,2];
     const DECIMALS_STORAGE_KEY='bn_decimals';
+    let decimalsMemory=null;   // cadangan bila localStorage tidak bisa dipakai (mode privat/iframe)
     function storedDecimals(){
       try{
         const raw=window.localStorage.getItem(DECIMALS_STORAGE_KEY);
-        if(raw===null||raw==='')return null;          // catatan: Number(null) = 0, jangan sampai terbaca "0 desimal"
-        const value=Number(raw);
-        return DECIMAL_MODES.indexOf(value)===-1?null:value;
-      }catch(error){return null;}
+        if(raw!==null&&raw!==''){
+          const value=Number(raw);
+          if(DECIMAL_MODES.indexOf(value)!==-1)return value;
+        }
+      }catch(error){/* localStorage diblokir: pakai cache memori */}
+      return decimalsMemory;
     }
     function rememberDecimals(value){
-      try{if(DECIMAL_MODES.indexOf(Number(value))===-1)window.localStorage.removeItem(DECIMALS_STORAGE_KEY);else window.localStorage.setItem(DECIMALS_STORAGE_KEY,String(Number(value)));}catch(error){/* mode privat: diabaikan */}
+      const numeric=Number(value);
+      decimalsMemory=DECIMAL_MODES.indexOf(numeric)===-1?null:numeric;
+      try{
+        if(decimalsMemory===null)window.localStorage.removeItem(DECIMALS_STORAGE_KEY);
+        else window.localStorage.setItem(DECIMALS_STORAGE_KEY,String(decimalsMemory));
+      }catch(error){/* mode privat/iframe: cukup andalkan cache memori */}
     }
     function normalizeDecimals(raw){
       const value=Number(raw);
@@ -67,12 +75,61 @@
     }
     function decimalMode(){const raw=state.appearance&&state.appearance.decimals;return normalizeDecimals(raw);}
     function decimalDigits(){return decimalMode();}
+    // Jumlah desimal efektif untuk sebuah konteks: pengaturan Pemilik/Admin menimpa
+    // pilihan lokal (perangkat) bila konteks/data tersebut membawa nilainya.
+    function digitsFor(data){
+      const raw=data&&data.decimals;
+      if(raw!==null&&raw!==undefined&&raw!==''){const value=Number(raw);if(DECIMAL_MODES.indexOf(value)!==-1)return value;}
+      return decimalMode();
+    }
+    // Pengaturan desimal yang dipakai saat menyimpan identitas/materi (ikut tersimpan di server).
+    function contextDecimals(){return decimalMode();}
+    // Ambil pengaturan desimal dari sebuah konteks/data (dikirim server) tanpa menimpanya bila kosong.
+    // Pemilik/Admin: simpan pilihan desimal ke konteks identitas agar akun lain (wali kelas/guru)
+    // yang membuka mapel & kelas yang sama ikut memakai pengaturan ini.
+    function persistContextDecimals(decimals){
+      if(!isAdmin()||!state.context)return;
+      const context={...state.context,decimals:Number(decimals)};
+      state.context=context;
+      // Disimpan per konteks (mapel + kelas) agar akun wali kelas ikut memakainya.
+      silentServer('saveContextDecimals',[state.sessionToken,context],()=>{});
+      // Cadangan: bila server belum mendukung, simpan juga pada identitas seperti biasa.
+      silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context}],()=>{});
+    }
+    // Cadangan bila getContextData belum menyisipi 'decimals': minta langsung ke server.
+    let decimalsLookupKey='';
+    function fetchContextDecimals(context){
+      if(!context||!context.className||!state.sessionToken)return;
+      const key=[context.className,context.subject,context.semester,context.academicYear].join('|');
+      if(decimalsLookupKey===key)return;
+      decimalsLookupKey=key;
+      silentServer('getContextDecimals',[state.sessionToken,context],result=>{
+        const value=Number(result&&result.decimals);
+        if(DECIMAL_MODES.indexOf(value)===-1)return;
+        if(Number(state.appearance&&state.appearance.decimals)===value)return;
+        state.appearance={...(state.appearance||{}),decimals:value};
+        rememberDecimals(value);
+        syncDecimalBridge();
+        renderAll();
+      });
+    }
+    function adoptContextDecimals(data){
+      const raw=data&&data.decimals;
+      if(raw===null||raw===undefined||raw==='')return false;
+      const value=Number(raw);
+      if(DECIMAL_MODES.indexOf(value)===-1)return false;
+      if(Number(state.appearance&&state.appearance.decimals)===value)return false;
+      state.appearance={...(state.appearance||{}),decimals:value};
+      rememberDecimals(value);
+      syncDecimalBridge();
+      return true;
+    }
     function syncDecimalBridge(){try{window.__bnDecimals=decimalMode();}catch(error){/* diabaikan */}}
-    function formatScore(value){
+    function formatScore(value,data){
       if(value===null||typeof value==='undefined'||!Number.isFinite(Number(value)))return '—';
       // Pengaturan 2 desimal mempertahankan gaya lama: nol di belakang koma tidak ditampilkan
       // ("75", bukan "75,00"), sementara 1/0 desimal mengikuti jumlah digit yang dipilih.
-      const digits=decimalDigits();
+      const digits=digitsFor(data);
       const factor=Math.pow(10,digits);
       // Pembulatan setengah ke atas (seperti Excel), bukan setengah ke genap.
       const rounded=Math.round((Number(value)+Number.EPSILON)*factor)/factor;
@@ -359,9 +416,10 @@ function callServer(method,args,onSuccess,busyText){
 }
 function secure(method,args,onSuccess,busyText){callServer(method,[state.sessionToken].concat(args||[]),onSuccess,busyText);}
 
-    function applyAppearance(appearance){const value=appearance||{};const hasDecimals=Object.prototype.hasOwnProperty.call(value,'decimals');
+    function applyAppearance(appearance,options){const value=appearance||{};const opt=options||{};
+      const hasDecimals=Object.prototype.hasOwnProperty.call(value,'decimals')&&!opt.keepDecimals;
       // Pengaturan desimal tidak boleh hilang hanya karena server belum menyimpan field ini:
-      // bila balasan server tidak memuat 'decimals', pakai pilihan tersimpan di perangkat.
+      // bila balasan server tidak memuat 'decimals', pakai pilihan tersimpan di perangkat/memori.
       const decimals=hasDecimals?normalizeDecimals(value.decimals):(storedDecimals()!==null?storedDecimals():(state.appearance&&DECIMAL_MODES.indexOf(Number(state.appearance.decimals))!==-1?Number(state.appearance.decimals):2));
       state.appearance={theme:value.theme==='modern'?'modern':'professional',loginBackgroundDataUri:value.loginBackgroundDataUri||'',decimals};
       if(hasDecimals)rememberDecimals(decimals);
@@ -384,7 +442,7 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
         return;
       }
       callServer('getAppStatus',[],status=>{
-        applyAppearance(status.appearance);
+        applyAppearance(status.appearance,{keepDecimals:true});
         if(status.setupRequired){showSetup(status);return;}
         if(!state.sessionToken){showLogin();return;}
         callServer('getInitialData',[state.sessionToken],data=>{if(data.setupRequired){showSetup(status);}else applyData(data);},'Memulihkan sesi…');
@@ -398,10 +456,13 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
     function logout(){clearInterval(heartbeatTimer);clearInterval(presenceTimer);callServer('logout',[state.sessionToken],()=>showLogin('Anda telah keluar dari aplikasi.'),'Keluar dari aplikasi…');}
 
     function applyData(data){
-      state.user=data.user||state.user;state.school=data.school||{};state.context=data.context||null;state.classes=data.classes||[];state.classProfiles=data.classProfiles||[];state.subjects=data.subjects||[];state.students=data.students||[];state.formative=data.formative||{};state.summative=data.summative||{};state.recap=data.recap||[];state.scoreCounts=data.scoreCounts||{formative:0,summative:0};state.users=data.users||state.users||[];state.homeroomLocked=Boolean(data.homeroomLocked);if(data.appearance)applyAppearance(data.appearance);if(typeof data.aboutText==='string')state.aboutText=data.aboutText;
+      state.user=data.user||state.user;state.school=data.school||{};state.context=data.context||null;
+      // Pengaturan desimal milik konteks (disimpan Pemilik/Admin) berlaku untuk semua akun.
+      const adopted=adoptContextDecimals(state.context);
+      if(!adopted)fetchContextDecimals(state.context);state.classes=data.classes||[];state.classProfiles=data.classProfiles||[];state.subjects=data.subjects||[];state.students=data.students||[];state.formative=data.formative||{};state.summative=data.summative||{};state.recap=data.recap||[];state.scoreCounts=data.scoreCounts||{formative:0,summative:0};state.users=data.users||state.users||[];state.homeroomLocked=Boolean(data.homeroomLocked);if(data.appearance)applyAppearance(data.appearance,{keepDecimals:true});if(typeof data.aboutText==='string')state.aboutText=data.aboutText;
       $('#authScreen').hidden=true;$('#appShell').classList.remove('is-hidden');renderAll();startPresenceTimers();
     }
-    function renderAll(){renderAccount();updateRoleUI();showView(state.activeView,false);}
+    function renderAll(){renderAccount();updateRoleUI();renderDecimalPicker();showView(state.activeView,false);}
     function renderView(name){if(name==='identity')renderIdentity();else if(name==='settings')renderSettings();else if(name==='students')renderStudents();else if(name==='formative')renderFormative();else if(name==='summative')renderSummative();else if(name==='recap')renderRecap();else if(name==='about')renderAbout();}
     function renderAccount(){if(!state.user)return;$('#accountAvatar').textContent=(state.user.name||'?').split(/\s+/).slice(0,2).map(t=>t[0]).join('').toUpperCase();$('#accountName').textContent=state.user.name;$('#accountRole').textContent=roleLabel(state.user.role);}
     function renderAdminCredentials(){const input=$('#adminUsername');if(!input||!state.user)return;if(isAdmin())input.value=state.user.username||'';}
@@ -412,7 +473,7 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
 const allowed=isAdmin()?['identity','students','formative','summative','recap','about','settings']:isGuru()?['identity','recap','about']:['recap','about'];
       $$('.nav-item[data-view-target]').forEach(btn=>{btn.hidden=allowed.indexOf(btn.dataset.viewTarget)===-1;});$('#sidebarLogoutButton').hidden=isAdmin();$('#logoutButton').hidden=!isAdmin();
       if(allowed.indexOf(state.activeView)===-1)state.activeView=isWali()?'recap':'identity';
-      $('#normalRecap').hidden=isWali();$('#exportActions').hidden=!isAdmin();$('#waliCopyPanel').hidden=!isWali();
+      $('#normalRecap').hidden=isWali();$('#decimalQuickBox').hidden=false;$('#exportActions').hidden=!isAdmin();$('#waliCopyPanel').hidden=!isWali();
       $('#roleIdentityNote').hidden=!isGuru();
       if(isWali())$('#recapIntro').textContent='Pilih mata pelajaran pada kelas yang dipegang, lalu salin atau unduh pengisian nilai Formatif dan Sumatif.';
       else $('#recapIntro').textContent=isGuru()?'Akun guru berada dalam mode baca. Nilai tidak dapat disalin, diunduh, atau diubah dari akun ini.':'Rekap akhir dihitung otomatis dari nilai formatif dan sumatif pada konteks aktif.';
@@ -479,7 +540,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function readContextForm(){const className=$('#className').value,subject=$('#mapelName').value.trim();if(!className||!subject)throw new Error('Kelas dan mata pelajaran wajib diisi.');return {className,subject,semester:$('#semester').value,academicYear:$('#academicYear').value.trim(),teacherName:$('#teacherName').value.trim(),teacherNip:$('#teacherNip').value.trim(),formativeWeight:$('#formativeWeight').value,summativeWeight:$('#summativeWeight').value,materials:materialsFromDOM()};}
     function readSchoolForm(){const nilai=id=>{const el=$(id);const teks=el?el.value.trim():'';return teks||SCHOOL_DEFAULTS[id]||'';};return {schoolName:nilai('#schoolName'),schoolStatus:nilai('#schoolStatus'),address:nilai('#schoolAddress'),village:nilai('#schoolVillage'),district:nilai('#schoolDistrict'),city:nilai('#schoolCity'),province:nilai('#schoolProvince'),defaultSemester:$('#semester').value,defaultAcademicYear:$('#academicYear').value.trim()};}
     function loadContext(){let selection;try{selection=readContextForm();}catch(error){toast(error.message,'error');return;}secure('getContextData',[selection],data=>{identityDirty=false;applyData(data);},'Memuat konteks kelas dan mapel…');}
-    function saveContext(){let context;try{context=readContextForm();}catch(error){toast(error.message,'error');return;}secure('saveContext',[{school:readSchoolForm(),context}],data=>{identityDirty=false;applyData(data);toast('Identitas dan materi berhasil disimpan.','success');},'Menyimpan identitas dan materi…');}
+    function saveContext(){let context;try{context=readContextForm();}catch(error){toast(error.message,'error');return;}context={...context,decimals:contextDecimals()};secure('saveContext',[{school:readSchoolForm(),context}],data=>{identityDirty=false;applyData(data);toast('Identitas dan materi berhasil disimpan.','success');},'Menyimpan identitas dan materi…');}
 
     function renderHomeroomManager(){const body=$('#homeroomManagerBody');if(!body)return;
       // Revisi 27: baca dulu isi kolom yang sedang diketik agar tidak hilang saat panel
@@ -502,7 +563,27 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function deleteUserAccount(userId){const user=(state.users||[]).find(item=>item.id===userId);if(!user)return;if(!confirm(`Hapus akun ${user.name}? Akun tidak dapat dipulihkan.`))return;secure('deleteUser',[userId],result=>{state.users=result.users;if(state.editUserId===userId)state.editUserId=null;renderUsers();toast('Akun berhasil dihapus.','success');},'Menghapus akun…');}
     function toggleUser(button){secure('setUserActive',[button.dataset.toggleUser,button.dataset.nextActive==='true'],result=>{state.users=result.users;renderUsers();toast('Status pengguna diperbarui.','success');},'Memperbarui pengguna…');}
 
-    function renderAppearancePanel(){const theme=$('#appTheme');const preview=$('#loginBackgroundPreview');if(!theme||!preview)return;theme.value=(state.appearance&&state.appearance.theme)==='modern'?'modern':'professional';const decimals=$('#appDecimals');if(decimals){const mode=String(decimalMode());if(decimals.value!==mode)decimals.value=mode;}const uri=state.appearance&&state.appearance.loginBackgroundDataUri;if(uri)preview.innerHTML=`<img src="${escapeAttr(uri)}" alt="Pratinjau background login">`;else preview.textContent='Belum ada gambar background login.';}
+    // Wali kelas / guru juga perlu mengatur desimal rata-rata yang mereka lihat & ekspor.
+    function ensureDecimalPicker(){
+      const holder=$('#decimalQuickHolder');
+      if(!holder||holder.dataset.ready==='true')return;
+      holder.dataset.ready='true';
+      holder.innerHTML=`<div class="field"><label for="appDecimalsQuick">Desimal rata-rata</label><select id="appDecimalsQuick"><option value="2">2 desimal (58,67)</option><option value="1">1 desimal (58,7)</option><option value="0">Tanpa desimal / bulat (59)</option></select><small>Berlaku untuk tampilan dan unduhan Excel di akun ini.</small></div>`;
+      holder.querySelector('select').addEventListener('change',event=>{
+        const decimals=Number(event.target.value);
+        if(DECIMAL_MODES.indexOf(decimals)===-1)return;
+        state.appearance={...state.appearance,decimals};rememberDecimals(decimals);syncDecimalBridge();renderAll();
+        toast(`Rata-rata kini ditampilkan ${decimals===0?'tanpa desimal (bulat)':`dengan ${decimals} desimal`}.`,'success');
+        silentServer('saveAppAppearance',[state.sessionToken,{...state.appearance,decimals}],()=>{});
+        persistContextDecimals(decimals);
+      });
+    }
+    function renderDecimalPicker(){
+      ensureDecimalPicker();
+      const quick=$('#appDecimalsQuick');
+      if(quick)quick.value=String(decimalMode());
+    }
+    function renderAppearancePanel(){renderDecimalPicker();const theme=$('#appTheme');const preview=$('#loginBackgroundPreview');if(!theme||!preview)return;theme.value=(state.appearance&&state.appearance.theme)==='modern'?'modern':'professional';const decimals=$('#appDecimals');if(decimals){const mode=String(decimalMode());if(decimals.value!==mode)decimals.value=mode;}const uri=state.appearance&&state.appearance.loginBackgroundDataUri;if(uri)preview.innerHTML=`<img src="${escapeAttr(uri)}" alt="Pratinjau background login">`;else preview.textContent='Belum ada gambar background login.';}
     function previewLoginBackgroundFile(){const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{$('#loginBackgroundPreview').innerHTML=`<img src="${escapeAttr(reader.result)}" alt="Pratinjau gambar yang dipilih">`;};reader.readAsDataURL(file);}
     function compressLoginBackground(file){return new Promise((resolve,reject)=>{if(!file||!/^image\/(png|jpeg|webp)$/i.test(file.type)){reject(new Error('Pilih gambar PNG, JPG, atau WEBP.'));return;}const reader=new FileReader();reader.onerror=()=>reject(new Error('Gambar tidak dapat dibaca.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('Gambar tidak dapat diproses.'));image.onload=()=>{const maxDimension=1600;const scale=Math.min(1,maxDimension/Math.max(image.width,image.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const context=canvas.getContext('2d');context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,canvas.width,canvas.height);let quality=.86;let data=canvas.toDataURL('image/jpeg',quality);while(data.length>1850000&&quality>.42){quality-=.08;data=canvas.toDataURL('image/jpeg',quality);}if(data.length>1950000){reject(new Error('Gambar masih terlalu besar setelah kompresi. Pilih gambar lain dengan ukuran lebih kecil.'));return;}resolve(data);};image.src=reader.result;};reader.readAsDataURL(file);});}
     // Revisi 35: jaring pengaman angka ekspor. Bila server belum mengirim recap/average,
@@ -654,7 +735,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function sumScores(studentId){const src=state.summative[studentId]||{};return {asam:vector(src.asam,state.scoreCounts.summative),asas:vector(src.asas,state.scoreCounts.summative)};}
     function renderFormative(){const root=$('#formativeTableWrap');$('#formativeContextText').textContent=contextDescription();$('#formativePill').textContent=`${state.scoreCounts.formative||0} KOMPONEN`;if(!state.students.length){root.innerHTML=`<div class="empty-state">${svg('users')}<b>Belum ada data murid</b><span>Tambahkan data murid terlebih dahulu.</span></div>`;return;}const materials=safeMaterials(state.context.materials);const groups=materials.map((m,i)=>`<th class="group-formative" colspan="${m.objectives.length}" title="${escapeAttr(materialTitleLabel(m,i))}">${escapeHtml(shortText(materialTitleLabel(m,i),38))}<span class="group-sub">Lingkup Materi ${i+1}</span></th>`).join('');const heads=materials.map(m=>m.objectives.map((o,i)=>`<th class="objective-head" title="${escapeAttr(objectiveLabel(o,i))}">TP ${i+1}<small>${escapeHtml(shortText(objectiveLabel(o,i),18))}</small></th>`).join('')).join('');const rows=state.students.map((student,index)=>{const scores=formattedScores(student.id),mean=average(scores);const cells=scores.map((score,si)=>`<td class="center"><input class="score-input" data-score-kind="formative" data-student-id="${escapeAttr(student.id)}" data-score-index="${si}" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="${escapeAttr(blankScore(score))}"></td>`).join('');return `<tr><td class="sticky-no">${index+1}</td><td class="sticky-name name-cell">${escapeHtml(student.name)}</td>${cells}<td class="score-average" data-average-cell="formative">${formatScore(mean)}</td></tr>`;}).join('');root.innerHTML=`${scoreScrollControls('formative','formatif')}<div class="table-shell" data-score-scroll-body="formative"><table class="score-table formative-table"><thead><tr><th class="sticky-no" rowspan="2">NO</th><th class="sticky-name" rowspan="2">NAMA</th>${groups}<th rowspan="2">RATA-RATA<br>FORMATIF</th></tr><tr>${heads}</tr></thead><tbody>${rows}</tbody></table></div>`;setupScoreScroll('formative',root);}
     function renderSummative(){const root=$('#summativeTableWrap');$('#summativeContextText').textContent=contextDescription();$('#summativePill').textContent=`${state.context&&state.context.materials?state.context.materials.length:0} LINGKUP`;if(!state.students.length){root.innerHTML=`<div class="empty-state">${svg('users')}<b>Belum ada data murid</b><span>Tambahkan data murid terlebih dahulu.</span></div>`;return;}const materials=safeMaterials(state.context.materials);const asamGroups=materials.map((m,i)=>`<th class="asam-group" colspan="2">ASAM ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join('');const asasGroups=materials.map((m,i)=>`<th class="asas-group" colspan="2">ASAS ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join('');const typeHeads=Array.from({length:materials.length*2},()=>'<th class="objective-head">TES</th><th class="objective-head">NON<br>TES</th>').join('');const rows=state.students.map((student,index)=>{const scores=sumScores(student.id),mean=average(scores.asam.concat(scores.asas));const cell=(kind,arr)=>arr.map((score,si)=>`<td class="center"><input class="score-input" data-score-kind="${kind}" data-student-id="${escapeAttr(student.id)}" data-score-index="${si}" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="${escapeAttr(blankScore(score))}"></td>`).join('');return `<tr><td class="sticky-no">${index+1}</td><td class="sticky-name name-cell">${escapeHtml(student.name)}</td>${cell('asam',scores.asam)}${cell('asas',scores.asas)}<td class="score-average" data-average-cell="summative">${formatScore(mean)}</td></tr>`;}).join('');root.innerHTML=`${scoreScrollControls('summative','sumatif')}<div class="table-shell" data-score-scroll-body="summative"><table class="score-table"><thead><tr><th class="sticky-no" rowspan="3">NO</th><th class="sticky-name" rowspan="3">NAMA</th><th class="asam-group" colspan="${state.scoreCounts.summative}">ASESMEN SUMATIF AKHIR MATERI</th><th class="asas-group" colspan="${state.scoreCounts.summative}">ASESMEN SUMATIF AKHIR SEMESTER</th><th rowspan="3">RATA-RATA<br>SUMATIF</th></tr><tr>${asamGroups}${asasGroups}</tr><tr>${typeHeads}</tr></thead><tbody>${rows}</tbody></table></div>`;setupScoreScroll('summative',root);}
-    function updateScoreInput(input){const kind=input.dataset.scoreKind,id=input.dataset.studentId,index=Number(input.dataset.scoreIndex),raw=input.value.trim(),value=raw===''?null:toNumber(raw),invalid=raw!==''&&(value===null||value<0||value>100);input.classList.toggle('invalid-score',invalid);if(invalid||!Number.isInteger(index))return;if(kind==='formative'){const scores=formattedScores(id);scores[index]=value;state.formative[id]=scores;const output=$('[data-average-cell="formative"]',input.closest('tr'));if(output)output.textContent=formatScore(average(scores));}else{const scores=sumScores(id);scores[kind][index]=value;state.summative[id]=scores;const output=$('[data-average-cell="summative"]',input.closest('tr'));if(output)output.textContent=formatScore(average(scores.asam.concat(scores.asas)));}}
+    function updateScoreInput(input){const kind=input.dataset.scoreKind,id=input.dataset.studentId,index=Number(input.dataset.scoreIndex),raw=input.value.trim(),value=raw===''?null:toNumber(raw),invalid=raw!==''&&(value===null||value<0||value>100);input.classList.toggle('invalid-score',invalid);if(invalid||!Number.isInteger(index))return;if(kind==='formative'){const scores=formattedScores(id);scores[index]=value;state.formative[id]=scores;const output=$('[data-average-cell="formative"]',input.closest('tr'));if(output)output.textContent=formatScore(average(scores),{decimals});}else{const scores=sumScores(id);scores[kind][index]=value;state.summative[id]=scores;const output=$('[data-average-cell="summative"]',input.closest('tr'));if(output)output.textContent=formatScore(average(scores.asam.concat(scores.asas)));}}
     function hasInvalidScores(){return Boolean($('.score-input.invalid-score'));}
     // ---------- Revisi 28: kolom nilai manual (tanpa spinner), Enter pindah baris, tempel dari luar ----------
     function injectScoreStyles(){
@@ -825,10 +906,10 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function exportExcel(){secure('exportExcel',[currentSelection()],result=>downloadExcel(withExportData(result)),'Menyusun satu file Excel: Formatif, Sumatif, dan Rekap…');}
     function renderWaliCopy(){if(!isWali())return;const classSelect=$('#waliClassName');if(!classSelect)return;renderClassOptions(classSelect,state.user.className||state.context.className,true);classSelect.disabled=Boolean(state.user.className);renderSubjectOptions($('#waliSubject'),state.waliData?state.waliData.context.subject:((state.user.subjects&&state.user.subjects[0])||state.context.subject||''),state.user.subjects);$('#waliSubject').disabled=Boolean(state.user.subjects&&state.user.subjects.length===1);$('#waliSemester').value=state.waliData?state.waliData.context.semester:(state.context.semester||'GANJIL');$('#waliAcademicYear').value=state.waliData?state.waliData.context.academicYear:(state.context.academicYear||'');$('#waliSemester').disabled=true;$('#waliAcademicYear').disabled=true;const status=$('#waliCopyStatus');const materialsWrap=$('#waliMaterialsWrap');if(!state.waliData){status.innerHTML='Pilih mata pelajaran lalu klik <strong>Tampilkan nilai</strong>. Semester dan tahun pelajaran mengikuti pengaturan Admin. Rekap akhir tidak tersedia pada mode wali kelas.';materialsWrap.innerHTML='';$('#waliFormativeWrap').innerHTML='';$('#waliSummativeWrap').innerHTML='';return;}status.innerHTML=`Data siap disalin: <strong>${escapeHtml(state.waliData.context.className)}</strong> · ${escapeHtml(state.waliData.context.subject)} · ${escapeHtml(state.waliData.context.semester)} ${escapeHtml(state.waliData.context.academicYear)}.`;renderWaliMaterials();renderWaliTables();}
     function waliSelection(){const subject=$('#waliSubject').value.trim();if(!subject)throw new Error('Mata pelajaran wajib diisi.');return {className:$('#waliClassName').value,subject,semester:$('#waliSemester').value,academicYear:$('#waliAcademicYear').value.trim()};}
-    function loadWaliCopy(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('getHomeroomCopyData',[selection],data=>{state.waliData=data;renderWaliCopy();toast('Nilai Formatif dan Sumatif siap disalin.','success');},'Memuat nilai untuk wali kelas…');}
-    function downloadWaliFile(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('exportExcel',[selection,{waliCopy:true}],result=>downloadExcel(withExportData(result)),'Menyusun file nilai Formatif, Sumatif, dan Rekap…');}
-    function waliFormativeTable(data){const materials=safeMaterials(data.context.materials),scoresCount=data.scoreCounts.formative;const groups=materials.map((m,i)=>`<th class="group-formative" colspan="${m.objectives.length}">${escapeHtml(shortText(materialTitleLabel(m,i),38))}<span class="group-sub">Lingkup ${i+1}</span></th>`).join('');const heads=materials.map(m=>m.objectives.map((o,i)=>`<th class="objective-head">TP ${i+1}<small>${escapeHtml(shortText(objectiveLabel(o,i),18))}</small></th>`).join('')).join('');const rows=data.students.map((s,i)=>{const scores=vector(data.formative[s.id],scoresCount);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${scores.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}<td class="score-average">${formatScore(average(scores))}</td></tr>`;}).join('');return `${scoreScrollControls('wali-formative','Formatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-formative"><table class="score-table formative-table"><thead><tr><th class="sticky-no" rowspan="2">NO</th><th class="sticky-name" rowspan="2">NAMA</th>${groups}<th rowspan="2">RATA-RATA<br>FORMATIF</th></tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${scoresCount+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
-    function waliSummativeTable(data){const materials=safeMaterials(data.context.materials),per=data.scoreCounts.summative;const asam=materials.map((m,i)=>`<th class="asam-group" colspan="2">ASAM ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),asas=materials.map((m,i)=>`<th class="asas-group" colspan="2">ASAS ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),heads=Array.from({length:materials.length*2},()=>'<th class="objective-head">TES</th><th class="objective-head">NON<br>TES</th>').join('');const rows=data.students.map((s,i)=>{const source=data.summative[s.id]||{},a=vector(source.asam,per),b=vector(source.asas,per);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${a.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}${b.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}<td class="score-average">${formatScore(average(a.concat(b)))}</td></tr>`;}).join('');return `${scoreScrollControls('wali-summative','Sumatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-summative"><table class="score-table"><thead><tr><th class="sticky-no" rowspan="3">NO</th><th class="sticky-name" rowspan="3">NAMA</th><th class="asam-group" colspan="${per}">ASESMEN SUMATIF AKHIR MATERI</th><th class="asas-group" colspan="${per}">ASESMEN SUMATIF AKHIR SEMESTER</th><th rowspan="3">RATA-RATA<br>SUMATIF</th></tr><tr>${asam}${asas}</tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${per*2+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
+    function loadWaliCopy(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('getHomeroomCopyData',[selection],data=>{state.waliData=data;adoptContextDecimals(data.context);renderWaliCopy();toast('Nilai Formatif dan Sumatif siap disalin.','success');},'Memuat nilai untuk wali kelas…');}
+    function downloadWaliFile(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('exportExcel',[selection,{waliCopy:true,decimals:digitsFor(state.waliData&&state.waliData.context)}],result=>downloadExcel(withExportData(result)),'Menyusun file nilai Formatif, Sumatif, dan Rekap…');}
+    function waliFormativeTable(data){const materials=safeMaterials(data.context.materials),scoresCount=data.scoreCounts.formative,decimals=(data.context&&data.context.decimals)??data.decimals;const groups=materials.map((m,i)=>`<th class="group-formative" colspan="${m.objectives.length}">${escapeHtml(shortText(materialTitleLabel(m,i),38))}<span class="group-sub">Lingkup ${i+1}</span></th>`).join('');const heads=materials.map(m=>m.objectives.map((o,i)=>`<th class="objective-head">TP ${i+1}<small>${escapeHtml(shortText(objectiveLabel(o,i),18))}</small></th>`).join('')).join('');const rows=data.students.map((s,i)=>{const scores=vector(data.formative[s.id],scoresCount);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${scores.map(v=>`<td><span class="score-readonly">${formatScore(v,{decimals})}</span></td>`).join('')}<td class="score-average">${formatScore(average(scores),{decimals})}</td></tr>`;}).join('');return `${scoreScrollControls('wali-formative','Formatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-formative"><table class="score-table formative-table"><thead><tr><th class="sticky-no" rowspan="2">NO</th><th class="sticky-name" rowspan="2">NAMA</th>${groups}<th rowspan="2">RATA-RATA<br>FORMATIF</th></tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${scoresCount+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
+    function waliSummativeTable(data){const materials=safeMaterials(data.context.materials),per=data.scoreCounts.summative,decimals=(data.context&&data.context.decimals)??data.decimals;const asam=materials.map((m,i)=>`<th class="asam-group" colspan="2">ASAM ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),asas=materials.map((m,i)=>`<th class="asas-group" colspan="2">ASAS ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),heads=Array.from({length:materials.length*2},()=>'<th class="objective-head">TES</th><th class="objective-head">NON<br>TES</th>').join('');const rows=data.students.map((s,i)=>{const source=data.summative[s.id]||{},a=vector(source.asam,per),b=vector(source.asas,per);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${a.map(v=>`<td><span class="score-readonly">${formatScore(v,{decimals})}</span></td>`).join('')}${b.map(v=>`<td><span class="score-readonly">${formatScore(v,{decimals})}</span></td>`).join('')}<td class="score-average">${formatScore(average(a.concat(b)),{decimals})}</td></tr>`;}).join('');return `${scoreScrollControls('wali-summative','Sumatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-summative"><table class="score-table"><thead><tr><th class="sticky-no" rowspan="3">NO</th><th class="sticky-name" rowspan="3">NAMA</th><th class="asam-group" colspan="${per}">ASESMEN SUMATIF AKHIR MATERI</th><th class="asas-group" colspan="${per}">ASESMEN SUMATIF AKHIR SEMESTER</th><th rowspan="3">RATA-RATA<br>SUMATIF</th></tr><tr>${asam}${asas}</tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${per*2+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
     function renderWaliMaterials(){const data=state.waliData;const wrap=$('#waliMaterialsWrap');if(!data||!wrap)return;const materials=safeMaterials(data.context.materials);wrap.innerHTML=`<div class="wali-materials-heading"><span>Lingkup Materi & Tujuan Pembelajaran</span><span class="tag">${materials.length} Lingkup</span></div><div class="wali-material-list">${materials.map((material,index)=>`<article class="wali-material-card"><b>${index+1}. ${escapeHtml(materialTitleLabel(material,index))}</b><ul>${material.objectives.map((objective,objectiveIndex)=>`<li>TP ${objectiveIndex+1}: ${escapeHtml(objectiveLabel(objective,objectiveIndex))}</li>`).join('')}</ul></article>`).join('')}</div>`;}
     function renderWaliTables(){const data=state.waliData;if(!data)return;const f=$('#waliFormativeWrap'),s=$('#waliSummativeWrap');f.innerHTML=waliFormativeTable(data);s.innerHTML=waliSummativeTable(data);f.hidden=state.waliTab!=='formative';s.hidden=state.waliTab!=='summative';setupScoreScroll('wali-formative',f);setupScoreScroll('wali-summative',s);$$('[data-wali-tab]').forEach(button=>button.classList.toggle('active',button.dataset.waliTab===state.waliTab));}
     // ---------- Revisi 30: salin seluruh nilai (TES & NON TES) ke Excel / Word ----------
@@ -876,7 +957,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         const headers=['NO','NAMA',...columns,'RATA-RATA FORMATIF'];
         const rows=source.students.map((student,index)=>{
           const scores=source.readFormative(student.id);
-          return [String(index+1),student.name||'',...scores.slice(0,columns.length).map(copyCellText),formatScore(average(scores))];
+          return [String(index+1),student.name||'',...scores.slice(0,columns.length).map(copyCellText),formatScore(average(scores),{decimals})];
         });
         return {title:'NILAI FORMATIF',description:source.description,headers,rows};
       }
@@ -966,6 +1047,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         state.appearance={...state.appearance,decimals};rememberDecimals(decimals);syncDecimalBridge();renderAll();
         toast(`Rata-rata kini ditampilkan ${decimals===0?'tanpa desimal (bulat)':`dengan ${decimals} desimal`}.`,'success');
         silentServer('saveAppAppearance',[state.sessionToken,{...state.appearance,decimals}],()=>{});
+        persistContextDecimals(decimals);
       });
       $('#saveHomeroomButton').addEventListener('click',saveHomerooms);$('#unlockHomeroomButton').addEventListener('click',unlockHomerooms);$('#saveAdminCredentialsButton').addEventListener('click',saveAdminCredentials);$('#saveAppearanceButton').addEventListener('click',saveAppearance);$('#clearLoginBackgroundButton').addEventListener('click',clearLoginBackground);$('#resetApplicationButton').addEventListener('click',resetApplication);$('#loginBackgroundFile').addEventListener('change',previewLoginBackgroundFile);$('#appTheme').addEventListener('change',()=>applyAppearance({theme:$('#appTheme').value,loginBackgroundDataUri:state.appearance.loginBackgroundDataUri}));$('#saveAboutButton').addEventListener('click',saveAbout);$('#applyAboutTemplateButton').addEventListener('click',applyAboutTemplate);$('#createUserButton').addEventListener('click',createUser);$('#cancelEditUserButton').addEventListener('click',resetUserEditor);$('#usersTableBody').addEventListener('click',event=>{const edit=event.target.closest('[data-edit-user]');if(edit){beginEditUser(edit.dataset.editUser);return;}const remove=event.target.closest('[data-delete-user]');if(remove){deleteUserAccount(remove.dataset.deleteUser);return;}const button=event.target.closest('[data-toggle-user]');if(button)toggleUser(button);});
       $('#saveStudentsButton').addEventListener('click',saveStudents);$('#deleteStudentsButton').addEventListener('click',openBulkDeleteStudentsModal);$('#studentsClassSelect').addEventListener('change',switchStudentsClass);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;studentsDirty=true;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;confirmRemoveStudent(student);});
