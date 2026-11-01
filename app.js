@@ -473,7 +473,8 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
 const allowed=isAdmin()?['identity','students','formative','summative','recap','about','settings']:isGuru()?['identity','recap','about']:['recap','about'];
       $$('.nav-item[data-view-target]').forEach(btn=>{btn.hidden=allowed.indexOf(btn.dataset.viewTarget)===-1;});$('#sidebarLogoutButton').hidden=isAdmin();$('#logoutButton').hidden=!isAdmin();
       if(allowed.indexOf(state.activeView)===-1)state.activeView=isWali()?'recap':'identity';
-      $('#normalRecap').hidden=isWali();$('#decimalQuickBox').hidden=false;$('#exportActions').hidden=!isAdmin();$('#waliCopyPanel').hidden=!isWali();
+      // Pengaturan desimal hanya milik pemilik/guru mapel; wali kelas memakai desimal yang sudah ditetapkan pemilik mapel.
+      $('#normalRecap').hidden=isWali();$('#decimalQuickBox').hidden=isWali();$('#exportActions').hidden=!isAdmin();$('#waliCopyPanel').hidden=!isWali();
       $('#roleIdentityNote').hidden=!isGuru();
       if(isWali())$('#recapIntro').textContent='Pilih mata pelajaran pada kelas yang dipegang, lalu salin atau unduh pengisian nilai Formatif dan Sumatif.';
       else $('#recapIntro').textContent=isGuru()?'Akun guru berada dalam mode baca. Nilai tidak dapat disalin, diunduh, atau diubah dari akun ini.':'Rekap akhir dihitung otomatis dari nilai formatif dan sumatif pada konteks aktif.';
@@ -904,7 +905,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       return result;
     }
     function exportExcel(){secure('exportExcel',[currentSelection()],result=>downloadExcel(withExportData(result)),'Menyusun satu file Excel: Formatif, Sumatif, dan Rekap…');}
-    function renderWaliCopy(){if(!isWali())return;const classSelect=$('#waliClassName');if(!classSelect)return;renderClassOptions(classSelect,state.user.className||state.context.className,true);classSelect.disabled=Boolean(state.user.className);renderSubjectOptions($('#waliSubject'),state.waliData?state.waliData.context.subject:((state.user.subjects&&state.user.subjects[0])||state.context.subject||''),state.user.subjects);$('#waliSubject').disabled=Boolean(state.user.subjects&&state.user.subjects.length===1);$('#waliSemester').value=state.waliData?state.waliData.context.semester:(state.context.semester||'GANJIL');$('#waliAcademicYear').value=state.waliData?state.waliData.context.academicYear:(state.context.academicYear||'');$('#waliSemester').disabled=true;$('#waliAcademicYear').disabled=true;const status=$('#waliCopyStatus');const materialsWrap=$('#waliMaterialsWrap');if(!state.waliData){status.innerHTML='Pilih mata pelajaran lalu klik <strong>Tampilkan nilai</strong>. Semester dan tahun pelajaran mengikuti pengaturan Admin. Rekap akhir tidak tersedia pada mode wali kelas.';materialsWrap.innerHTML='';$('#waliFormativeWrap').innerHTML='';$('#waliSummativeWrap').innerHTML='';return;}status.innerHTML=`Data siap disalin: <strong>${escapeHtml(state.waliData.context.className)}</strong> · ${escapeHtml(state.waliData.context.subject)} · ${escapeHtml(state.waliData.context.semester)} ${escapeHtml(state.waliData.context.academicYear)}.`;renderWaliMaterials();renderWaliTables();}
+    function renderWaliCopy(){if(!isWali())return;const classSelect=$('#waliClassName');if(!classSelect)return;renderClassOptions(classSelect,state.user.className||state.context.className,true);classSelect.disabled=Boolean(state.user.className);renderSubjectOptions($('#waliSubject'),state.waliData?state.waliData.context.subject:((state.user.subjects&&state.user.subjects[0])||state.context.subject||''),state.user.subjects);$('#waliSubject').disabled=Boolean(state.user.subjects&&state.user.subjects.length===1);$('#waliSemester').value=state.waliData?state.waliData.context.semester:(state.context.semester||'GANJIL');$('#waliAcademicYear').value=state.waliData?state.waliData.context.academicYear:(state.context.academicYear||'');$('#waliSemester').disabled=true;$('#waliAcademicYear').disabled=true;const status=$('#waliCopyStatus');const materialsWrap=$('#waliMaterialsWrap');if(!state.waliData){status.innerHTML='Pilih mata pelajaran, data langsung ditampilkan otomatis. Tombol <strong>Tampilkan Nilai</strong> tetap tersedia sebagai cadangan. Semester dan tahun pelajaran mengikuti pengaturan Admin. Rekap akhir tidak tersedia pada mode wali kelas.';materialsWrap.innerHTML='';$('#waliFormativeWrap').innerHTML='';$('#waliSummativeWrap').innerHTML='';return;}status.innerHTML=`Data siap disalin: <strong>${escapeHtml(state.waliData.context.className)}</strong> · ${escapeHtml(state.waliData.context.subject)} · ${escapeHtml(state.waliData.context.semester)} ${escapeHtml(state.waliData.context.academicYear)}.`;renderWaliMaterials();renderWaliTables();}
     function waliSelection(){const subject=$('#waliSubject').value.trim();if(!subject)throw new Error('Mata pelajaran wajib diisi.');return {className:$('#waliClassName').value,subject,semester:$('#waliSemester').value,academicYear:$('#waliAcademicYear').value.trim()};}
     function loadWaliCopy(options){
       const opt=options||{};
@@ -1008,7 +1009,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         .join('\r\n');
     }
     function writeClipboard(text){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(text);return new Promise((resolve,reject)=>{const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{const ok=document.execCommand('copy');area.remove();ok?resolve():reject(new Error('Browser menolak clipboard.'));}catch(error){area.remove();reject(error);}});}
-    function copyWaliTable(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}copyScoreTable(state.waliTab,state.waliData);}
+    function copyWaliTable(){if(!state.waliData){toast('Tampilkan Nilai terlebih dahulu.','error');return;}copyScoreTable(state.waliTab,state.waliData);}
     function copyScoreTable(kind,data){
       const source=scoreSource(data);
       if(!source){toast('Pilih identitas pembelajaran terlebih dahulu.','error');return;}
@@ -1039,7 +1040,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function waliMaterialTitlesText(){const data=state.waliData;if(!data)return '';return waliMaterialTitles(data).map(oneLine).filter(Boolean).join('\r\n');}
     function waliObjectivesText(){const data=state.waliData;if(!data)return '';return waliObjectives(data).map(row=>oneLine(row.text)).filter(Boolean).join('\r\n');}
     function copyWaliMaterialTitles(){
-      if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}
+      if(!state.waliData){toast('Tampilkan Nilai terlebih dahulu.','error');return;}
       const total=waliMaterialTitles(state.waliData).length;
       if(!total){toast('Belum ada lingkup materi untuk disalin.','error');return;}
       writeClipboard(waliMaterialTitlesText())
@@ -1047,7 +1048,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         .catch(error=>toast('Lingkup materi tidak dapat disalin: '+messageOf(error),'error'));
     }
     function copyWaliObjectives(){
-      if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}
+      if(!state.waliData){toast('Tampilkan Nilai terlebih dahulu.','error');return;}
       const total=waliObjectives(state.waliData).length;
       if(!total){toast('Belum ada tujuan pembelajaran untuk disalin.','error');return;}
       writeClipboard(waliObjectivesText())
@@ -1077,7 +1078,8 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);
       const copyFormativeButton=$('#copyFormativeButton');if(copyFormativeButton)copyFormativeButton.addEventListener('click',()=>copyScoreTable('formative'));
       const copySummativeButton=$('#copySummativeButton');if(copySummativeButton)copySummativeButton.addEventListener('click',()=>copyScoreTable('summative'));['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
-      $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);
+      $('#exportExcelButton').addEventListener('click',exportExcel);const __decBox=$('#decimalQuickBox');if(__decBox)__decBox.hidden=isWali();
+      $('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);
       ['waliSubject','waliClassName','waliSemester','waliAcademicYear'].forEach(id=>{
         const field=$('#'+id);
         if(!field)return;
