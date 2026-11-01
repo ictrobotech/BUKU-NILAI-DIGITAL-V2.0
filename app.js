@@ -133,15 +133,28 @@
     // yang membuka mapel & kelas yang sama ikut memakai pengaturan ini.
     // Beberapa konteks yang sudah dikirim ulang pada sesi ini (agar tidak berulang).
     const healedContexts={};
+    // Simpan pengaturan desimal per konteks. Dikirim dalam dua bentuk argumen agar tetap
+    // jalan pada patch SQL versi lama (argumen pertama = konteks) maupun versi terbaru
+    // (token sesi + konteks). Bila keduanya gagal, pilihan tetap diingat di perangkat.
+    function saveContextDecimalsRemote(context,decimals){
+      const payload={...context,decimals:Number(decimals)};
+      let failure=null;
+      return apiRequest('saveContextDecimals',[state.sessionToken,payload])
+        .catch(error=>{failure=error;return apiRequest('saveContextDecimals',[payload]);})
+        .catch(error=>{failure=error;return null;})
+        .then(result=>{if(result===null)throw (failure||new Error('Gagal menyimpan pengaturan desimal.'));return result;});
+    }
     function healContextDecimals(context,decimals){
       if(!isAdmin()&&!isGuru())return;
       const key=contextDecimalKey(context);
       if(!key||healedContexts[key]===decimals)return;
       healedContexts[key]=decimals;
-      const payload={...context,decimals:Number(decimals)};
-      silentServer('saveContextDecimals',[state.sessionToken,payload],()=>{});
-      // Cadangan untuk server yang belum punya fungsi baru: simpan lewat identitas.
-      silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context:payload}],()=>{});
+      saveContextDecimalsRemote(context,decimals)
+        .then(()=>{})
+        .catch(()=>{
+          // Server belum mendukung: simpan lewat identitas (cadangan) agar tetap tersinkron.
+          silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context:{...context,decimals:Number(decimals)}}],()=>{});
+        });
     }
     function persistContextDecimals(decimals,contextArg){
       // Pemilik/Admin dan guru pemilik mapel boleh menetapkan desimal; wali kelas tidak.
@@ -155,9 +168,12 @@
       rememberContextDecimals(context,value);
       rememberDecimals(value);
       // Disimpan per konteks (mapel + kelas) agar akun wali kelas ikut memakainya.
-      silentServer('saveContextDecimals',[state.sessionToken,context],()=>{});
-      // Cadangan: bila server belum mendukung, simpan juga pada identitas seperti biasa.
-      silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context}],()=>{});
+      saveContextDecimalsRemote(context,value)
+        .catch(()=>{})
+        .then(()=>{
+          // Cadangan: bila server belum mendukung, simpan juga pada identitas seperti biasa.
+          silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context}],()=>{});
+        });
     }
     // Cadangan bila getContextData belum menyisipi 'decimals': minta langsung ke server.
     let decimalsLookupKey='';
@@ -166,7 +182,7 @@
       const key=[context.className,context.subject,context.semester,context.academicYear].join('|');
       if(decimalsLookupKey===key)return;
       decimalsLookupKey=key;
-      silentServer('getContextDecimals',[state.sessionToken,context],result=>{
+      const handleDecimals=result=>{
         const remote=Number(result&&result.decimals);
         let value=remote;
         if(DECIMAL_MODES.indexOf(remote)===-1)value=storedContextDecimals(context);
@@ -180,7 +196,12 @@
         rememberDecimals(value);
         syncDecimalBridge();
         renderAll();
-      });
+      };
+      // Dua bentuk argumen: patch SQL terbaru membaca konteks dari daftar argumen,
+      // patch versi lama hanya membaca argumen pertama.
+      apiRequest('getContextDecimals',[state.sessionToken,context])
+        .then(handleDecimals)
+        .catch(()=>apiRequest('getContextDecimals',[context]).then(handleDecimals).catch(()=>{}));
     }
     function adoptContextDecimals(data){
       const context=data||null;
