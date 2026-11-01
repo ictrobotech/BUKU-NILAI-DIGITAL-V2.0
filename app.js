@@ -70,6 +70,8 @@
     // Berguna agar pilihan Pemilik tetap berlaku setelah keluar/masuk akun wali kelas
     // walau server belum menyimpan field ini.
     const DECIMALS_CONTEXT_KEY='bn_decimals_context';
+    // Pengaturan desimal milik PEMILIK APLIKASI berlaku global: satu nilai untuk semua mapel.
+    const DECIMALS_GLOBAL_KEY='bn_decimals_global';
     function contextDecimalKey(context){
       if(!context||!context.className)return '';
       return [context.className,context.subject,context.semester,context.academicYear]
@@ -97,6 +99,19 @@
         map[key]=value;
         window.localStorage.setItem(DECIMALS_CONTEXT_KEY,JSON.stringify(map));
       }catch(error){/* localStorage diblokir: abaikan */}
+    }
+    function storedGlobalDecimals(){
+      try{
+        const raw=window.localStorage.getItem(DECIMALS_GLOBAL_KEY);
+        if(raw!==null&&raw!==''){const value=Number(raw);if(DECIMAL_MODES.indexOf(value)!==-1)return value;}
+      }catch(error){/* diabaikan */}
+      return null;
+    }
+    function rememberGlobalDecimals(decimals){
+      const value=DECIMAL_MODES.indexOf(Number(decimals))===-1?null:Number(decimals);
+      if(value===null)return;
+      try{window.localStorage.setItem(DECIMALS_GLOBAL_KEY,String(value));}catch(error){/* diabaikan */}
+      rememberDecimals(value);
     }
     function normalizeDecimals(raw){
       // Hati-hati: Number(null) === 0, padahal 0 adalah mode yang sah (tanpa desimal).
@@ -184,6 +199,15 @@
       decimalsLookupKey=key;
       const handleDecimals=result=>{
         const remote=Number(result&&result.decimals);
+        const global=storedGlobalDecimals();
+        if(global!==null){
+          if(DECIMAL_MODES.indexOf(remote)!==-1&&remote!==global)healContextDecimals(context,global);
+          if(currentAppearanceDecimals()!==global){
+            state.appearance={...(state.appearance||{}),decimals:global};
+            rememberDecimals(global);syncDecimalBridge();renderAll();
+          }
+          return;
+        }
         let value=remote;
         if(DECIMAL_MODES.indexOf(remote)===-1)value=storedContextDecimals(context);
         const local=storedContextDecimals(context);
@@ -208,6 +232,15 @@
       const raw=context&&context.decimals;
       let serverValue=(raw===null||raw===undefined||raw==='')?null:Number(raw);
       if(serverValue!==null&&DECIMAL_MODES.indexOf(serverValue)===-1)serverValue=null;
+      const global=storedGlobalDecimals();
+      if(global!==null){
+        // Pemilik aplikasi sudah menetapkan pengaturan global: berlaku untuk semua mapel.
+        if(global!==serverValue)healContextDecimals(context,global);
+        if(currentAppearanceDecimals()===global)return false;
+        state.appearance={...(state.appearance||{}),decimals:global};
+        rememberDecimals(global);syncDecimalBridge();
+        return true;
+      }
       const local=storedContextDecimals(context);
       let value;
       if(local!==null){
@@ -563,7 +596,10 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
       state.user=data.user||state.user;state.school=data.school||{};state.context=data.context||null;
       // Pengaturan desimal milik konteks (disimpan Pemilik/Admin) berlaku untuk semua akun.
       const adopted=adoptContextDecimals(state.context);
-      if(!adopted)fetchContextDecimals(state.context);state.classes=data.classes||[];state.classProfiles=data.classProfiles||[];state.subjects=data.subjects||[];state.students=data.students||[];state.formative=data.formative||{};state.summative=data.summative||{};state.recap=data.recap||[];state.scoreCounts=data.scoreCounts||{formative:0,summative:0};state.users=data.users||state.users||[];state.homeroomLocked=Boolean(data.homeroomLocked);if(data.appearance)applyAppearance(data.appearance,{keepDecimals:true});if(typeof data.aboutText==='string')state.aboutText=data.aboutText;
+      if(!adopted)fetchContextDecimals(state.context);
+      // Pengaturan desimal Pemilik bersifat global: setiap akun menariknya sekali per sesi
+      // (bila perangkat ini belum menyimpannya), supaya guru mapel & wali kelas ikut.
+      if(storedGlobalDecimals()===null)fetchGlobalDecimals();state.classes=data.classes||[];state.classProfiles=data.classProfiles||[];state.subjects=data.subjects||[];state.students=data.students||[];state.formative=data.formative||{};state.summative=data.summative||{};state.recap=data.recap||[];state.scoreCounts=data.scoreCounts||{formative:0,summative:0};state.users=data.users||state.users||[];state.homeroomLocked=Boolean(data.homeroomLocked);if(data.appearance)applyAppearance(data.appearance,{keepDecimals:true});if(typeof data.aboutText==='string')state.aboutText=data.aboutText;
       $('#authScreen').hidden=true;$('#appShell').classList.remove('is-hidden');renderAll();startPresenceTimers();
     }
     function renderAll(){renderAccount();updateRoleUI();renderDecimalPicker();showView(state.activeView,false);}
@@ -673,11 +709,51 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       const value=DECIMAL_MODES.indexOf(Number(decimals))===-1?2:Number(decimals);
       state.appearance={...(state.appearance||{}),decimals:value};
       rememberDecimals(value);syncDecimalBridge();renderAll();
-      toast(`Rata-rata kini ditampilkan ${value===0?'tanpa desimal (bulat)':`dengan ${value} desimal`}.`,'success');
-      silentServer('saveAppAppearance',[state.sessionToken,{...(state.appearance||{}),decimals:value}],()=>{});
-      // Disimpan per konteks (mapel + kelas) supaya akun lain & setelah keluar-masuk tetap sama.
-      persistContextDecimals(value);
+      const global=isAdmin();
+      toast(global
+        ? `Rata-rata ${value===0?'tanpa desimal (bulat)':`dengan ${value} desimal`} kini berlaku untuk semua mapel.`
+        : `Rata-rata kini ditampilkan ${value===0?'tanpa desimal (bulat)':`dengan ${value} desimal`}.`,'success');
+      if(isAdmin()||isGuru())silentServer('saveAppAppearance',[state.sessionToken,{...(state.appearance||{}),decimals:value}],()=>{});
+      if(global)persistGlobalDecimals(value);
+      else persistContextDecimals(value);
     }
+    // Pemilik aplikasi: simpan sekali untuk SEMUA mapel (server: baris '__GLOBAL__').
+    function persistGlobalDecimals(decimals){
+      if(!isAdmin())return;   // pengaturan global hanya milik Pemilik aplikasi
+      const value=DECIMAL_MODES.indexOf(Number(decimals))===-1?2:Number(decimals);
+      rememberGlobalDecimals(value);
+      // Pengaturan per mapel yang pernah dibuat tidak lagi dipakai (server ikut menghapus).
+      try{window.localStorage.removeItem(DECIMALS_CONTEXT_KEY);}catch(error){/* diabaikan */}
+      let failure=null;
+      apiRequest('saveGlobalDecimals',[state.sessionToken,{decimals:value}])
+        .catch(error=>{failure=error;return apiRequest('saveGlobalDecimals',[{decimals:value}]);})
+        .catch(error=>{failure=error;return null;})
+        .then(result=>{
+          if(result!==null)return;
+          // Server belum mendukung: cadangkan lewat identitas agar tetap tersinkron.
+          if(state.context)silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context:{...state.context,decimals:value}}],()=>{});
+        });
+    }
+    function fetchGlobalDecimals(){
+      if(decimalsGlobalLookup)return;
+      decimalsGlobalLookup=true;
+      const handle=result=>{
+        const value=Number(result&&result.decimals);
+        if(DECIMAL_MODES.indexOf(value)===-1)return;
+        const local=storedGlobalDecimals();
+        // Pilihan yang sudah dibuat di perangkat ini tidak boleh ditimpa hasil permintaan
+        // yang mungkin masih dalam perjalanan (mis. saat Pemilik baru mengubah pengaturan).
+        if(local!==null&&local!==value)return;
+        rememberGlobalDecimals(value);
+        if(currentAppearanceDecimals()===value)return;
+        state.appearance={...(state.appearance||{}),decimals:value};
+        rememberDecimals(value);syncDecimalBridge();renderAll();
+      };
+      apiRequest('getGlobalDecimals',[state.sessionToken])
+        .then(handle)
+        .catch(()=>apiRequest('getGlobalDecimals',[]).then(handle).catch(()=>{}));
+    }
+    let decimalsGlobalLookup=false;
     // Kotak "Desimal rata-rata": satu di halaman Pengaturan (milik Pemilik/guru mapel),
     // satu lagi ringkasan cepat di halaman Rekap. Keduanya tersinkron.
     function ensureDecimalPicker(){
