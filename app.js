@@ -1017,8 +1017,11 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     }
     // Satu kolom per baris, tanpa nomor dan tanpa nama materi:
     // teks TP semua lingkup materi digabung urut, berupa kalimat utuh (aman di Excel & Word).
-    function waliMaterialTitlesText(){const data=state.waliData;if(!data)return '';return waliMaterialTitles(data).map(title=>String(title||'').trim()).filter(Boolean).join('\r\n');}
-    function waliObjectivesText(){const data=state.waliData;if(!data)return '';return waliObjectives(data).map(row=>String(row.text||'').trim()).filter(Boolean).join('\r\n');}
+    // Satu TP = satu baris = satu sel saat ditempel ke Excel.
+    // Baris baru di dalam teks TP diratakan menjadi spasi agar tidak menambah sel.
+    function oneLine(text){return String(text==null?'':text).replace(/[\t\r\n]+/g,' ').replace(/\s{2,}/g,' ').trim();}
+    function waliMaterialTitlesText(){const data=state.waliData;if(!data)return '';return waliMaterialTitles(data).map(oneLine).filter(Boolean).join('\r\n');}
+    function waliObjectivesText(){const data=state.waliData;if(!data)return '';return waliObjectives(data).map(row=>oneLine(row.text)).filter(Boolean).join('\r\n');}
     function copyWaliMaterialTitles(){
       if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}
       const total=waliMaterialTitles(state.waliData).length;
