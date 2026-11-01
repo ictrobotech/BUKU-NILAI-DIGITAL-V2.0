@@ -5,7 +5,7 @@
       sessionToken: sessionStorage.getItem('bn_untad_session') || '',
       user: null, school: {}, context: null, classes: [], classProfiles: [], subjects: [],
       students: [], formative: {}, summative: {}, recap: [], scoreCounts: { formative: 0, summative: 0 },
-      users: [], homeroomLocked: false, editUserId: null, appearance: { theme: 'professional', loginBackgroundDataUri: '', decimals: 2 }, aboutText: '', activeView: 'identity', waliData: null, waliTab: 'formative'
+      users: [], homeroomLocked: false, editUserId: null, appearance: { theme: 'professional', loginBackgroundDataUri: '', decimals: null }, aboutText: '', activeView: 'identity', waliData: null, waliTab: 'formative'
     };
     const ABOUT_TEMPLATE = [
       'Buku Nilai Digital V2.0 adalah sebuah platform manajemen penilaian siswa yang dikembangkan untuk menjawab kebutuhan transformasi digital dalam dunia pendidikan. Aplikasi ini dirancang secara khusus untuk mempermudah tugas administratif pendidik, sehingga guru dapat lebih berfokus pada hal yang paling penting: merancang pengalaman belajar yang bermakna, mendalam, dan menyenangkan bagi peserta didik. Hadir dengan antarmuka yang intuitif dan alur kerja yang efisien, versi 2.0 ini membawa berbagai peningkatan fungsionalitas untuk memastikan pengelolaan data akademik menjadi lebih cepat, akurat, dan transparan.',
@@ -66,12 +66,56 @@
         else window.localStorage.setItem(DECIMALS_STORAGE_KEY,String(decimalsMemory));
       }catch(error){/* mode privat/iframe: cukup andalkan cache memori */}
     }
+    // Ingatan desimal PER KONTEKS di perangkat (mapel + kelas + semester + tahun).
+    // Berguna agar pilihan Pemilik tetap berlaku setelah keluar/masuk akun wali kelas
+    // walau server belum menyimpan field ini.
+    const DECIMALS_CONTEXT_KEY='bn_decimals_context';
+    function contextDecimalKey(context){
+      if(!context||!context.className)return '';
+      return [context.className,context.subject,context.semester,context.academicYear]
+        .map(part=>String(part||'').toUpperCase().replace(/\s+/g,' ').trim()).join('|');
+    }
+    function contextDecimalMap(){
+      try{
+        const raw=window.localStorage.getItem(DECIMALS_CONTEXT_KEY);
+        const parsed=raw?JSON.parse(raw):null;
+        return parsed&&typeof parsed==='object'?parsed:{};
+      }catch(error){return {};}
+    }
+    function storedContextDecimals(context){
+      const key=contextDecimalKey(context);
+      if(!key)return null;
+      const value=Number(contextDecimalMap()[key]);
+      return DECIMAL_MODES.indexOf(value)===-1?null:value;
+    }
+    function rememberContextDecimals(context,decimals){
+      const key=contextDecimalKey(context);
+      const value=DECIMAL_MODES.indexOf(Number(decimals))===-1?null:Number(decimals);
+      if(!key||value===null)return;
+      try{
+        const map=contextDecimalMap();
+        map[key]=value;
+        window.localStorage.setItem(DECIMALS_CONTEXT_KEY,JSON.stringify(map));
+      }catch(error){/* localStorage diblokir: abaikan */}
+    }
     function normalizeDecimals(raw){
-      const value=Number(raw);
-      if(DECIMAL_MODES.indexOf(value)!==-1)return value;
+      // Hati-hati: Number(null) === 0, padahal 0 adalah mode yang sah (tanpa desimal).
+      // Nilai kosong harus dianggap "belum diatur", bukan "tanpa desimal".
+      const empty=raw===null||typeof raw==='undefined'||raw==='';
+      if(!empty){
+        const value=Number(raw);
+        if(DECIMAL_MODES.indexOf(value)!==-1)return value;
+      }
       // Kosong/rusak -> pilihan tersimpan di perangkat, atau 2 desimal bila belum pernah memilih.
-      if(raw===null||typeof raw==='undefined'||raw==='')return storedDecimals()===null?2:storedDecimals();
-      return storedDecimals()===null?2:storedDecimals();
+      const stored=storedDecimals();
+      return stored===null?2:stored;
+    }
+    // Mode desimal yang benar-benar sudah diatur (null bila belum pernah diatur).
+    function currentAppearanceDecimals(){
+      const raw=state.appearance&&state.appearance.decimals;
+      if(raw===null||typeof raw==='undefined'||raw==='')return null;
+      const value=Number(raw);
+      return DECIMAL_MODES.indexOf(value)===-1?null:value;
     }
     function decimalMode(){const raw=state.appearance&&state.appearance.decimals;return normalizeDecimals(raw);}
     function decimalDigits(){return decimalMode();}
@@ -87,10 +131,17 @@
     // Ambil pengaturan desimal dari sebuah konteks/data (dikirim server) tanpa menimpanya bila kosong.
     // Pemilik/Admin: simpan pilihan desimal ke konteks identitas agar akun lain (wali kelas/guru)
     // yang membuka mapel & kelas yang sama ikut memakai pengaturan ini.
-    function persistContextDecimals(decimals){
-      if(!isAdmin()||!state.context)return;
-      const context={...state.context,decimals:Number(decimals)};
-      state.context=context;
+    function persistContextDecimals(decimals,contextArg){
+      // Pemilik/Admin dan guru pemilik mapel boleh menetapkan desimal; wali kelas tidak.
+      if(!isAdmin()&&!isGuru())return;
+      const base=contextArg||state.context;
+      if(!base||!base.className)return;
+      const value=DECIMAL_MODES.indexOf(Number(decimals))===-1?2:Number(decimals);
+      const context={...base,decimals:value};
+      if(!contextArg)state.context=context;
+      // Pilihan selalu diingat di perangkat ini (per konteks) dan langsung dipakai.
+      rememberContextDecimals(context,value);
+      rememberDecimals(value);
       // Disimpan per konteks (mapel + kelas) agar akun wali kelas ikut memakainya.
       silentServer('saveContextDecimals',[state.sessionToken,context],()=>{});
       // Cadangan: bila server belum mendukung, simpan juga pada identitas seperti biasa.
@@ -106,7 +157,8 @@
       silentServer('getContextDecimals',[state.sessionToken,context],result=>{
         const value=Number(result&&result.decimals);
         if(DECIMAL_MODES.indexOf(value)===-1)return;
-        if(Number(state.appearance&&state.appearance.decimals)===value)return;
+        rememberContextDecimals(context,value);
+        if(currentAppearanceDecimals()===value)return;
         state.appearance={...(state.appearance||{}),decimals:value};
         rememberDecimals(value);
         syncDecimalBridge();
@@ -114,11 +166,17 @@
       });
     }
     function adoptContextDecimals(data){
-      const raw=data&&data.decimals;
-      if(raw===null||raw===undefined||raw==='')return false;
-      const value=Number(raw);
-      if(DECIMAL_MODES.indexOf(value)===-1)return false;
-      if(Number(state.appearance&&state.appearance.decimals)===value)return false;
+      const context=data||null;
+      let raw=context&&context.decimals;
+      let value=Number(raw);
+      if(raw===null||raw===undefined||raw===''||DECIMAL_MODES.indexOf(value)===-1){
+        // Server belum mengirim decimals: pakai ingatan per konteks di perangkat ini.
+        const remembered=storedContextDecimals(context);
+        if(remembered===null)return false;
+        value=remembered;
+      }
+      rememberContextDecimals(context,value);
+      if(currentAppearanceDecimals()===value)return false;
       state.appearance={...(state.appearance||{}),decimals:value};
       rememberDecimals(value);
       syncDecimalBridge();
@@ -420,7 +478,7 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
       const hasDecimals=Object.prototype.hasOwnProperty.call(value,'decimals')&&!opt.keepDecimals;
       // Pengaturan desimal tidak boleh hilang hanya karena server belum menyimpan field ini:
       // bila balasan server tidak memuat 'decimals', pakai pilihan tersimpan di perangkat/memori.
-      const decimals=hasDecimals?normalizeDecimals(value.decimals):(storedDecimals()!==null?storedDecimals():(state.appearance&&DECIMAL_MODES.indexOf(Number(state.appearance.decimals))!==-1?Number(state.appearance.decimals):2));
+      const decimals=hasDecimals?normalizeDecimals(value.decimals):(storedDecimals()!==null?storedDecimals():(currentAppearanceDecimals()===null?2:currentAppearanceDecimals()));
       state.appearance={theme:value.theme==='modern'?'modern':'professional',loginBackgroundDataUri:value.loginBackgroundDataUri||'',decimals};
       if(hasDecimals)rememberDecimals(decimals);
       syncDecimalBridge();document.body.classList.remove('theme-professional','theme-modern');document.body.classList.add(`theme-${state.appearance.theme}`);const screen=$('#authScreen');if(state.appearance.loginBackgroundDataUri){screen.style.setProperty('--login-background',`url("${state.appearance.loginBackgroundDataUri}")`);screen.classList.add('has-login-background');}else{screen.style.removeProperty('--login-background');screen.classList.remove('has-login-background');}renderAppearancePanel();}
@@ -565,24 +623,37 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function toggleUser(button){secure('setUserActive',[button.dataset.toggleUser,button.dataset.nextActive==='true'],result=>{state.users=result.users;renderUsers();toast('Status pengguna diperbarui.','success');},'Memperbarui pengguna…');}
 
     // Wali kelas / guru juga perlu mengatur desimal rata-rata yang mereka lihat & ekspor.
+    function applyDecimalChoice(decimals){
+      const value=DECIMAL_MODES.indexOf(Number(decimals))===-1?2:Number(decimals);
+      state.appearance={...(state.appearance||{}),decimals:value};
+      rememberDecimals(value);syncDecimalBridge();renderAll();
+      toast(`Rata-rata kini ditampilkan ${value===0?'tanpa desimal (bulat)':`dengan ${value} desimal`}.`,'success');
+      silentServer('saveAppAppearance',[state.sessionToken,{...(state.appearance||{}),decimals:value}],()=>{});
+      // Disimpan per konteks (mapel + kelas) supaya akun lain & setelah keluar-masuk tetap sama.
+      persistContextDecimals(value);
+    }
+    // Kotak "Desimal rata-rata": satu di halaman Pengaturan (milik Pemilik/guru mapel),
+    // satu lagi ringkasan cepat di halaman Rekap. Keduanya tersinkron.
     function ensureDecimalPicker(){
       const holder=$('#decimalQuickHolder');
-      if(!holder||holder.dataset.ready==='true')return;
-      holder.dataset.ready='true';
-      holder.innerHTML=`<div class="field"><label for="appDecimalsQuick">Desimal rata-rata</label><select id="appDecimalsQuick"><option value="2">2 desimal (58,67)</option><option value="1">1 desimal (58,7)</option><option value="0">Tanpa desimal / bulat (59)</option></select><small>Berlaku untuk tampilan dan unduhan Excel di akun ini.</small></div>`;
-      holder.querySelector('select').addEventListener('change',event=>{
-        const decimals=Number(event.target.value);
-        if(DECIMAL_MODES.indexOf(decimals)===-1)return;
-        state.appearance={...state.appearance,decimals};rememberDecimals(decimals);syncDecimalBridge();renderAll();
-        toast(`Rata-rata kini ditampilkan ${decimals===0?'tanpa desimal (bulat)':`dengan ${decimals} desimal`}.`,'success');
-        silentServer('saveAppAppearance',[state.sessionToken,{...state.appearance,decimals}],()=>{});
-        persistContextDecimals(decimals);
-      });
+      if(holder&&holder.dataset.ready!=='true'){
+        holder.dataset.ready='true';
+        holder.innerHTML=`<div class="field"><label for="appDecimalsQuick">Desimal rata-rata</label><select id="appDecimalsQuick"><option value="2">2 desimal (58,67)</option><option value="1">1 desimal (58,7)</option><option value="0">Tanpa desimal / bulat (59)</option></select><small>Berlaku untuk tampilan dan unduhan Excel di akun ini.</small></div>`;
+        holder.querySelector('select').addEventListener('change',event=>applyDecimalChoice(event.target.value));
+      }
+      const setting=$('#appDecimals');
+      if(setting&&setting.dataset.ready!=='true'){
+        setting.dataset.ready='true';
+        setting.addEventListener('change',event=>applyDecimalChoice(event.target.value));
+      }
     }
     function renderDecimalPicker(){
       ensureDecimalPicker();
+      const mode=String(decimalMode());
       const quick=$('#appDecimalsQuick');
-      if(quick)quick.value=String(decimalMode());
+      if(quick)quick.value=mode;
+      const setting=$('#appDecimals');
+      if(setting&&setting.value!==mode)setting.value=mode;
     }
     function renderAppearancePanel(){renderDecimalPicker();const theme=$('#appTheme');const preview=$('#loginBackgroundPreview');if(!theme||!preview)return;theme.value=(state.appearance&&state.appearance.theme)==='modern'?'modern':'professional';const decimals=$('#appDecimals');if(decimals){const mode=String(decimalMode());if(decimals.value!==mode)decimals.value=mode;}const uri=state.appearance&&state.appearance.loginBackgroundDataUri;if(uri)preview.innerHTML=`<img src="${escapeAttr(uri)}" alt="Pratinjau background login">`;else preview.textContent='Belum ada gambar background login.';}
     function previewLoginBackgroundFile(){const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{$('#loginBackgroundPreview').innerHTML=`<img src="${escapeAttr(reader.result)}" alt="Pratinjau gambar yang dipilih">`;};reader.readAsDataURL(file);}
