@@ -46,7 +46,26 @@
     function round2(value) { return Math.round((Number(value)+Number.EPSILON)*100)/100; }
     // Revisi 33: jumlah desimal rata-rata dapat diatur (2 / 1 / 0) lewat Pengaturan.
     const DECIMAL_MODES=[0,1,2];
-    function decimalMode(){const raw=state.appearance&&state.appearance.decimals;const value=Number(raw);return DECIMAL_MODES.indexOf(value)===-1?2:value;}
+    const DECIMALS_STORAGE_KEY='bn_decimals';
+    function storedDecimals(){
+      try{
+        const raw=window.localStorage.getItem(DECIMALS_STORAGE_KEY);
+        if(raw===null||raw==='')return null;          // catatan: Number(null) = 0, jangan sampai terbaca "0 desimal"
+        const value=Number(raw);
+        return DECIMAL_MODES.indexOf(value)===-1?null:value;
+      }catch(error){return null;}
+    }
+    function rememberDecimals(value){
+      try{if(DECIMAL_MODES.indexOf(Number(value))===-1)window.localStorage.removeItem(DECIMALS_STORAGE_KEY);else window.localStorage.setItem(DECIMALS_STORAGE_KEY,String(Number(value)));}catch(error){/* mode privat: diabaikan */}
+    }
+    function normalizeDecimals(raw){
+      const value=Number(raw);
+      if(DECIMAL_MODES.indexOf(value)!==-1)return value;
+      // Kosong/rusak -> pilihan tersimpan di perangkat, atau 2 desimal bila belum pernah memilih.
+      if(raw===null||typeof raw==='undefined'||raw==='')return storedDecimals()===null?2:storedDecimals();
+      return storedDecimals()===null?2:storedDecimals();
+    }
+    function decimalMode(){const raw=state.appearance&&state.appearance.decimals;return normalizeDecimals(raw);}
     function decimalDigits(){return decimalMode();}
     function syncDecimalBridge(){try{window.__bnDecimals=decimalMode();}catch(error){/* diabaikan */}}
     function formatScore(value){
@@ -340,7 +359,13 @@ function callServer(method,args,onSuccess,busyText){
 }
 function secure(method,args,onSuccess,busyText){callServer(method,[state.sessionToken].concat(args||[]),onSuccess,busyText);}
 
-    function applyAppearance(appearance){const value=appearance||{theme:'professional',loginBackgroundDataUri:'',decimals:2};state.appearance={theme:value.theme==='modern'?'modern':'professional',loginBackgroundDataUri:value.loginBackgroundDataUri||'',decimals:DECIMAL_MODES.indexOf(Number(value.decimals))===-1?2:Number(value.decimals)};syncDecimalBridge();document.body.classList.remove('theme-professional','theme-modern');document.body.classList.add(`theme-${state.appearance.theme}`);const screen=$('#authScreen');if(state.appearance.loginBackgroundDataUri){screen.style.setProperty('--login-background',`url("${state.appearance.loginBackgroundDataUri}")`);screen.classList.add('has-login-background');}else{screen.style.removeProperty('--login-background');screen.classList.remove('has-login-background');}renderAppearancePanel();}
+    function applyAppearance(appearance){const value=appearance||{};const hasDecimals=Object.prototype.hasOwnProperty.call(value,'decimals');
+      // Pengaturan desimal tidak boleh hilang hanya karena server belum menyimpan field ini:
+      // bila balasan server tidak memuat 'decimals', pakai pilihan tersimpan di perangkat.
+      const decimals=hasDecimals?normalizeDecimals(value.decimals):(storedDecimals()!==null?storedDecimals():(state.appearance&&DECIMAL_MODES.indexOf(Number(state.appearance.decimals))!==-1?Number(state.appearance.decimals):2));
+      state.appearance={theme:value.theme==='modern'?'modern':'professional',loginBackgroundDataUri:value.loginBackgroundDataUri||'',decimals};
+      if(hasDecimals)rememberDecimals(decimals);
+      syncDecimalBridge();document.body.classList.remove('theme-professional','theme-modern');document.body.classList.add(`theme-${state.appearance.theme}`);const screen=$('#authScreen');if(state.appearance.loginBackgroundDataUri){screen.style.setProperty('--login-background',`url("${state.appearance.loginBackgroundDataUri}")`);screen.classList.add('has-login-background');}else{screen.style.removeProperty('--login-background');screen.classList.remove('has-login-background');}renderAppearancePanel();}
     function resetLoginFields(){const username=$('#loginUsername'),password=$('#loginPassword'),toggle=$('#toggleLoginPassword');if(username)username.value='';if(password){password.value='';password.type='password';}if(toggle){toggle.setAttribute('aria-pressed','false');toggle.setAttribute('aria-label','Tampilkan kata sandi');}}
     function toggleLoginPassword(){const input=$('#loginPassword'),button=$('#toggleLoginPassword');const visible=input.type==='text';input.type=visible?'password':'text';button.setAttribute('aria-pressed',String(!visible));button.setAttribute('aria-label',visible?'Tampilkan kata sandi':'Sembunyikan kata sandi');}
 
@@ -481,7 +506,11 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function previewLoginBackgroundFile(){const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{$('#loginBackgroundPreview').innerHTML=`<img src="${escapeAttr(reader.result)}" alt="Pratinjau gambar yang dipilih">`;};reader.readAsDataURL(file);}
     function compressLoginBackground(file){return new Promise((resolve,reject)=>{if(!file||!/^image\/(png|jpeg|webp)$/i.test(file.type)){reject(new Error('Pilih gambar PNG, JPG, atau WEBP.'));return;}const reader=new FileReader();reader.onerror=()=>reject(new Error('Gambar tidak dapat dibaca.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('Gambar tidak dapat diproses.'));image.onload=()=>{const maxDimension=1600;const scale=Math.min(1,maxDimension/Math.max(image.width,image.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const context=canvas.getContext('2d');context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,canvas.width,canvas.height);let quality=.86;let data=canvas.toDataURL('image/jpeg',quality);while(data.length>1850000&&quality>.42){quality-=.08;data=canvas.toDataURL('image/jpeg',quality);}if(data.length>1950000){reject(new Error('Gambar masih terlalu besar setelah kompresi. Pilih gambar lain dengan ukuran lebih kecil.'));return;}resolve(data);};image.src=reader.result;};reader.readAsDataURL(file);});}
     function decimalSelection(){const field=$('#appDecimals');const value=Number(field&&field.value);return DECIMAL_MODES.indexOf(value)===-1?2:value;}
-    async function saveAppearance(){try{const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];const payload={theme:$('#appTheme').value,decimals:decimalSelection()};if(file)payload.loginBackgroundDataUri=await compressLoginBackground(file);secure('saveAppAppearance',[payload],result=>{applyAppearance(result.appearance||{...state.appearance,decimals:payload.decimals});$('#loginBackgroundFile').value='';renderAll();toast('Tema, desimal rata-rata, dan tampilan login berhasil disimpan.','success');},'Menyimpan tampilan aplikasi…');}catch(error){toast(messageOf(error),'error');}}
+    async function saveAppearance(){try{const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];const payload={theme:$('#appTheme').value,decimals:decimalSelection()};
+      // Terapkan & ingat pilihan segera agar tabel langsung berubah, walau server belum mendukung field ini.
+      state.appearance={...state.appearance,theme:payload.theme,decimals:payload.decimals};rememberDecimals(payload.decimals);syncDecimalBridge();renderAll();
+      if(file)payload.loginBackgroundDataUri=await compressLoginBackground(file);
+      secure('saveAppAppearance',[payload],result=>{applyAppearance({...(result.appearance||{}),decimals:payload.decimals});$('#loginBackgroundFile').value='';renderAll();toast('Tema, desimal rata-rata, dan tampilan login berhasil disimpan.','success');},'Menyimpan tampilan aplikasi…');}catch(error){toast(messageOf(error),'error');}}
     function clearLoginBackground(){secure('saveAppAppearance',[{theme:$('#appTheme').value,decimals:decimalSelection(),clearBackground:true}],result=>{applyAppearance(result.appearance);$('#loginBackgroundFile').value='';toast('Background login dihapus.','success');},'Menghapus background login…');}
     function resetApplication(){const password=$('#resetAdminPassword').value;const confirmed=$('#resetConfirm').checked;if(!password||!confirmed){toast('Masukkan kata sandi Pemilik/Admin dan centang konfirmasi reset.','error');return;}if(!confirm('Reset seluruh data murid, nilai, rekap, dan identitas materi? Tindakan ini tidak dapat dibatalkan.'))return;secure('resetApplicationData',[password],data=>{$('#resetAdminPassword').value='';$('#resetConfirm').checked=false;state.activeView='identity';applyData(data);toast('Seluruh data penilaian berhasil direset ke default.','success');},'Mereset seluruh data penilaian…');}
     function aboutInline(text){return escapeHtml(text).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');}
