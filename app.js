@@ -910,6 +910,8 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         .map(row=>row.map(cell=>String(cell==null?'':cell).replace(/[\t\r\n]+/g,' ')).join('\t'))
         .join('\r\n');
     }
+    function writeClipboard(text){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(text);return new Promise((resolve,reject)=>{const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{const ok=document.execCommand('copy');area.remove();ok?resolve():reject(new Error('Browser menolak clipboard.'));}catch(error){area.remove();reject(error);}});}
+    function copyWaliTable(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}copyScoreTable(state.waliTab,state.waliData);}
     function copyScoreTable(kind,data){
       const source=scoreSource(data);
       if(!source){toast('Pilih identitas pembelajaran terlebih dahulu.','error');return;}
@@ -921,10 +923,36 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     }
     function copyScoreValue(value){return value===null||typeof value==='undefined'||Number.isNaN(Number(value))?'':formatScore(value);}
     function waliCopyText(tab){const data=state.waliData;if(!data)return '';if(tab==='formative'){return data.students.map(student=>vector(data.formative[student.id],data.scoreCounts.formative).map(copyScoreValue).join('\t')).join('\n');}return data.students.map(student=>{const source=data.summative[student.id]||{};return vector(source.asam,data.scoreCounts.summative).concat(vector(source.asas,data.scoreCounts.summative)).map(copyScoreValue).join('\t');}).join('\n');}
-    function waliMaterialsText(){const data=state.waliData;if(!data)return '';const lines=[['LINGKUP MATERI','TUJUAN PEMBELAJARAN']];safeMaterials(data.context.materials).forEach((material,materialIndex)=>{material.objectives.forEach((objective,objectiveIndex)=>{lines.push([materialTitleLabel(material,materialIndex),`TP ${objectiveIndex+1}: ${objectiveLabel(objective,objectiveIndex)}`]);});});return lines.map(row=>row.join('\t')).join('\n');}
-    function writeClipboard(text){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(text);return new Promise((resolve,reject)=>{const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{const ok=document.execCommand('copy');area.remove();ok?resolve():reject(new Error('Browser menolak clipboard.'));}catch(error){area.remove();reject(error);}});}
-    function copyWaliTable(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}copyScoreTable(state.waliTab,state.waliData);}
-    function copyWaliMaterials(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}writeClipboard(waliMaterialsText()).then(()=>toast('Lingkup materi dan tujuan pembelajaran berhasil disalin.','success')).catch(error=>toast('Materi tidak dapat disalin: '+messageOf(error),'error'));}
+    // Revisi 36: salin lingkup materi dan salin TP dipisah menjadi dua tombol.
+    function waliMaterialTitles(data){return safeMaterials(data.context.materials).map((material,index)=>materialTitleLabel(material,index));}
+    function waliObjectives(data){
+      const rows=[];
+      safeMaterials(data.context.materials).forEach((material,materialIndex)=>{
+        material.objectives.forEach((objective,objectiveIndex)=>{
+          rows.push({material:materialTitleLabel(material,materialIndex),label:`TP ${objectiveIndex+1}`,text:objectiveLabel(objective,objectiveIndex)});
+        });
+      });
+      return rows;
+    }
+    // Satu kolom per baris: aman ditempel ke Excel (1 kolom, tidak berhamburan) maupun Word.
+    function waliMaterialTitlesText(){const data=state.waliData;if(!data)return '';return waliMaterialTitles(data).map((title,index)=>`${index+1}. ${title}`).join('\r\n');}
+    function waliObjectivesText(){const data=state.waliData;if(!data)return '';return waliObjectives(data).map(row=>`${row.material} - ${row.label}: ${row.text}`).join('\r\n');}
+    function copyWaliMaterialTitles(){
+      if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}
+      const total=waliMaterialTitles(state.waliData).length;
+      if(!total){toast('Belum ada lingkup materi untuk disalin.','error');return;}
+      writeClipboard(waliMaterialTitlesText())
+        .then(()=>toast(`${total} lingkup materi berhasil disalin (satu kolom, siap tempel ke Excel/Word).`,'success'))
+        .catch(error=>toast('Lingkup materi tidak dapat disalin: '+messageOf(error),'error'));
+    }
+    function copyWaliObjectives(){
+      if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}
+      const total=waliObjectives(state.waliData).length;
+      if(!total){toast('Belum ada tujuan pembelajaran untuk disalin.','error');return;}
+      writeClipboard(waliObjectivesText())
+        .then(()=>toast(`${total} tujuan pembelajaran berhasil disalin (satu kolom, siap tempel ke Excel/Word).`,'success'))
+        .catch(error=>toast('Tujuan pembelajaran tidak dapat disalin: '+messageOf(error),'error'));
+    }
 
     // ---------- Event ----------
     function toggleSidebar(){const shell=$('#appShell'),collapsed=shell.classList.toggle('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded',String(!collapsed));}
@@ -947,6 +975,6 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);
       const copyFormativeButton=$('#copyFormativeButton');if(copyFormativeButton)copyFormativeButton.addEventListener('click',()=>copyScoreTable('formative'));
       const copySummativeButton=$('#copySummativeButton');if(copySummativeButton)copySummativeButton.addEventListener('click',()=>copyScoreTable('summative'));['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
-      $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialsButton').addEventListener('click',copyWaliMaterials);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
+      $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialTitlesButton').addEventListener('click',copyWaliMaterialTitles);$('#copyWaliObjectivesButton').addEventListener('click',copyWaliObjectives);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
     }
     document.addEventListener('DOMContentLoaded',()=>{bindEvents();if(window.innerWidth<=820){$('#appShell').classList.add('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded','false');}bootstrap();});
