@@ -569,24 +569,6 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       if(fromForm)return fromForm;
       return readPair(context.formativeWeight,context.summativeWeight)||{formativeWeight:50,summativeWeight:50};
     }
-    function saveWeightPreset(formative,summative){
-      if(!state.context){toast('Pilih identitas pembelajaran terlebih dahulu.','error');return;}
-      let payload;
-      try{payload={...readContextForm(),formativeWeight:String(formative),summativeWeight:String(summative)};}
-      catch(error){
-        // Bila form Identitas belum terisi, kirim ulang konteks aktif apa adanya + bobot baru.
-        const context=state.context;
-        payload={className:context.className,subject:context.subject,semester:context.semester,academicYear:context.academicYear,teacherName:context.teacherName||'',teacherNip:context.teacherNip||'',formativeWeight:String(formative),summativeWeight:String(summative),materials:safeMaterials(context.materials)};
-      }
-      secure('saveContext',[payload],data=>{
-        applyData(data);
-        const field=$('#formativeWeight'),second=$('#summativeWeight');
-        if(field)field.value=String(formative);
-        if(second)second.value=String(summative);
-        renderAll();
-        toast(`Bobot diset ${formative}% Formatif + ${summative}% Sumatif. Nilai Rapor pada Rekap & Excel dihitung ulang.`,'success');
-      },'Menyimpan bobot penilaian…');
-    }
     async function saveAppearance(){try{const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];const payload={theme:$('#appTheme').value,decimals:decimalSelection()};
       // Terapkan & ingat pilihan segera agar tabel langsung berubah, walau server belum mendukung field ini.
       state.appearance={...state.appearance,theme:payload.theme,decimals:payload.decimals};rememberDecimals(payload.decimals);syncDecimalBridge();renderAll();
@@ -833,7 +815,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function saveSummative(){if(hasInvalidScores()){toast('Periksa nilai merah; nilai harus 0 sampai 100.','error');return;}const payload={...currentSelection(),rows:state.students.map(s=>{const scores=sumScores(s.id);return {studentId:s.id,asam:scores.asam,asas:scores.asas};})};secure('saveSummativeScores',[payload],data=>{applyData(data);toast('Nilai sumatif berhasil disimpan.','success');},'Menyimpan nilai sumatif…');}
 
     // ---------- Rekap, Excel, dan salin wali kelas ----------
-    function renderRecap(){if(!state.context)return;if(!isWali()){const fw=state.context.formativeWeight??50,sw=state.context.summativeWeight??50;$('#recapFormula').innerHTML=`<span class="formula-icon">${svg('formula')}</span><div><b>Rumus NR (Nilai Rapor)</b><p>NR = (Rata-rata Formatif × ${escapeHtml(fw)}%) + (Rata-rata Sumatif × ${escapeHtml(sw)}%), dinormalisasi terhadap total bobot. Konteks: <strong>${escapeHtml(contextDescription())}</strong>.</p>${Number(fw)!==Number(sw)?`<p class="formula-note">Bobot tidak sama (${escapeHtml(fw)}/${escapeHtml(sw)}). Bila lembar Excel sekolah memakai 50% Formatif + 50% Sumatif, nilai rapor di sini akan berbeda. <button class="button secondary compact" type="button" data-weight-preset="50">Samakan ke 50 : 50</button></p>`:`<p class="formula-note">Bobot Formatif dan Sumatif sama (${escapeHtml(fw)} : ${escapeHtml(sw)}).</p>`}</div>`;const body=$('#recapTableBody');body.innerHTML=state.recap.length?state.recap.map(r=>`<tr><td class="center">${r.number}</td><td>${escapeHtml(r.name)}</td><td class="average">${formatScore(r.formativeAverage)}</td><td class="average">${formatScore(r.summativeAverage)}</td><td class="final-score">${formatScore(r.finalScore)}</td></tr>`).join(''):`<tr><td colspan="5"><div class="empty-state">${svg('users')}<b>Belum ada murid untuk direkap</b></div></td></tr>`;}renderWaliCopy();}
+    function renderRecap(){if(!state.context)return;if(!isWali()){$('#recapFormula').innerHTML=`<span class="formula-icon">${svg('formula')}</span><div><b>Nilai Rapor (NR)</b><p>Dihitung otomatis dari rata-rata Formatif dan rata-rata Sumatif pada konteks aktif. Konteks: <strong>${escapeHtml(contextDescription())}</strong>.</p></div>`;const body=$('#recapTableBody');body.innerHTML=state.recap.length?state.recap.map(r=>`<tr><td class="center">${r.number}</td><td>${escapeHtml(r.name)}</td><td class="average">${formatScore(r.formativeAverage)}</td><td class="average">${formatScore(r.summativeAverage)}</td><td class="final-score">${formatScore(r.finalScore)}</td></tr>`).join(''):`<tr><td colspan="5"><div class="empty-state">${svg('users')}<b>Belum ada murid untuk direkap</b></div></td></tr>`;}renderWaliCopy();}
     function downloadExcel(result){try{const raw=atob(result.base64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);const blob=new Blob([bytes],{type:result.mimeType||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=result.fileName||'Buku_Nilai.xlsx';a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2500);toast('Excel terpadu berhasil diunduh. Browser perangkat menentukan folder Download atau dialog simpan.','success');}catch(error){toast('File Excel tidak dapat diunduh: '+messageOf(error),'error');}}
     function withExportData(result){
       // result: {fileName, mimeType, base64, data?} — hanya dipakai bila adapter mengirim data mentah.
@@ -956,20 +938,6 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         state.appearance={...state.appearance,decimals};rememberDecimals(decimals);syncDecimalBridge();renderAll();
         toast(`Rata-rata kini ditampilkan ${decimals===0?'tanpa desimal (bulat)':`dengan ${decimals} desimal`}.`,'success');
         silentServer('saveAppAppearance',[state.sessionToken,{...state.appearance,decimals}],()=>{});
-      });
-      const recapFormulaBox=$('#recapFormula');
-      if(recapFormulaBox)recapFormulaBox.addEventListener('click',event=>{
-        const button=event.target.closest('[data-weight-preset]');
-        if(!button)return;
-        const value=Number(button.dataset.weightPreset);
-        if(!Number.isFinite(value)||value<0||value>100){toast('Nilai bobot tidak valid.','error');return;}
-        saveWeightPreset(value,100-value);
-      });
-      const weightPreset=$('#recapWeightPreset');
-      if(weightPreset)weightPreset.addEventListener('change',()=>{
-        const value=String(weightPreset.value||'');
-        if(value==='match-excel'){saveWeightPreset(50,50);return;}
-        if(value==='context'){renderRecap();return;}
       });
       $('#saveHomeroomButton').addEventListener('click',saveHomerooms);$('#unlockHomeroomButton').addEventListener('click',unlockHomerooms);$('#saveAdminCredentialsButton').addEventListener('click',saveAdminCredentials);$('#saveAppearanceButton').addEventListener('click',saveAppearance);$('#clearLoginBackgroundButton').addEventListener('click',clearLoginBackground);$('#resetApplicationButton').addEventListener('click',resetApplication);$('#loginBackgroundFile').addEventListener('change',previewLoginBackgroundFile);$('#appTheme').addEventListener('change',()=>applyAppearance({theme:$('#appTheme').value,loginBackgroundDataUri:state.appearance.loginBackgroundDataUri}));$('#saveAboutButton').addEventListener('click',saveAbout);$('#applyAboutTemplateButton').addEventListener('click',applyAboutTemplate);$('#createUserButton').addEventListener('click',createUser);$('#cancelEditUserButton').addEventListener('click',resetUserEditor);$('#usersTableBody').addEventListener('click',event=>{const edit=event.target.closest('[data-edit-user]');if(edit){beginEditUser(edit.dataset.editUser);return;}const remove=event.target.closest('[data-delete-user]');if(remove){deleteUserAccount(remove.dataset.deleteUser);return;}const button=event.target.closest('[data-toggle-user]');if(button)toggleUser(button);});
       $('#saveStudentsButton').addEventListener('click',saveStudents);$('#deleteStudentsButton').addEventListener('click',openBulkDeleteStudentsModal);$('#studentsClassSelect').addEventListener('change',switchStudentsClass);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;studentsDirty=true;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;confirmRemoveStudent(student);});

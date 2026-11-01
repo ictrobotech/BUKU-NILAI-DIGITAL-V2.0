@@ -331,13 +331,16 @@
     const school = data.school || {};
     const context = data.context || {};
 
+    // Lebar blok judul mengikuti lebar tabel identitas (kolom NO + LINGKUP + TUJUAN = 3 kolom),
+    // supaya batas fill judul tidak melebihi tabel di bawahnya.
+    const titleLast = 3;
     sheet.set(1, 1, 'DAFTAR NILAI KURIKULUM NASIONAL',
       { bold: true, size: 16, color: COLOR.white, fill: COLOR.navy, align: 'center', valign: 'middle' });
-    sheet.merge(1, 1, 1, 8);
+    sheet.merge(1, 1, 1, titleLast);
     sheet.rowHeight(1, 26);
 
     sheet.set(2, 1, school.schoolName, { bold: true, color: COLOR.white, fill: COLOR.blue, align: 'center' });
-    sheet.merge(2, 1, 2, 8);
+    sheet.merge(2, 1, 2, titleLast);
 
     const rows = [
       ['NAMA SATUAN PENDIDIKAN', school.schoolName],
@@ -549,8 +552,8 @@
       sheet.set(5, asamStart, 'ASAM ' + (index + 1) + ': ' + materialTitle(material, index),
         { bold: true, color: COLOR.navy, fill: COLOR.peachTab, align: 'center', valign: 'middle', wrap: true });
       sheet.merge(5, asamStart, 5, asamStart + 1);
-      sheet.set(5, asasStart, 'ASAS ' + (index + 1),
-        { bold: true, color: COLOR.navy, fill: COLOR.oliveTab, align: 'center', valign: 'middle' });
+      sheet.set(5, asasStart, 'ASAS ' + (index + 1) + ': ' + materialTitle(material, index),
+        { bold: true, color: COLOR.navy, fill: COLOR.oliveTab, align: 'center', valign: 'middle', wrap: true });
       sheet.merge(5, asasStart, 5, asasStart + 1);
 
       [asamStart, asasStart].forEach(function (start) {
@@ -608,11 +611,6 @@
     sheet.set(2, 1, 'KELAS: ' + context.className + '  |  ' + contextLine(data),
       { bold: true, color: COLOR.white, fill: COLOR.blue, align: 'center' });
     sheet.merge(2, 1, 2, 5);
-    sheet.set(3, 1, 'Rumus NR (Nilai Rapor): (Formatif × ' + context.formativeWeight +
-      '%) + (Sumatif × ' + context.summativeWeight + '%), dinormalisasi terhadap total bobot.',
-      { italic: true, color: COLOR.navy, fill: COLOR.paleLine, align: 'center' });
-    sheet.merge(3, 1, 3, 5);
-
     sheet.set(5, 1, 'NO', { bold: true, color: COLOR.white, fill: COLOR.navy, align: 'center', valign: 'middle' });
     sheet.set(5, 2, 'NAMA', { bold: true, color: COLOR.white, fill: COLOR.navy, align: 'center', valign: 'middle' });
     sheet.set(5, 3, 'RATA-RATA FORMATIF',
