@@ -5,7 +5,7 @@
       sessionToken: sessionStorage.getItem('bn_untad_session') || '',
       user: null, school: {}, context: null, classes: [], classProfiles: [], subjects: [],
       students: [], formative: {}, summative: {}, recap: [], scoreCounts: { formative: 0, summative: 0 },
-      users: [], homeroomLocked: false, editUserId: null, appearance: { theme: 'professional', loginBackgroundDataUri: '' }, aboutText: '', activeView: 'identity', waliData: null, waliTab: 'formative'
+      users: [], homeroomLocked: false, editUserId: null, appearance: { theme: 'professional', loginBackgroundDataUri: '', decimals: 2 }, aboutText: '', activeView: 'identity', waliData: null, waliTab: 'formative'
     };
     const ABOUT_TEMPLATE = [
       'Buku Nilai Digital V2.0 adalah sebuah platform manajemen penilaian siswa yang dikembangkan untuk menjawab kebutuhan transformasi digital dalam dunia pendidikan. Aplikasi ini dirancang secara khusus untuk mempermudah tugas administratif pendidik, sehingga guru dapat lebih berfokus pada hal yang paling penting: merancang pengalaman belajar yang bermakna, mendalam, dan menyenangkan bagi peserta didik. Hadir dengan antarmuka yang intuitif dan alur kerja yang efisien, versi 2.0 ini membawa berbagai peningkatan fungsionalitas untuk memastikan pengelolaan data akademik menjadi lebih cepat, akurat, dan transparan.',
@@ -44,7 +44,27 @@
     function shortText(value, length) { const text=String(value || ''); return text.length>length ? text.slice(0,Math.max(1,length-1))+'…' : text; }
     function toNumber(value) { if(value===null||value===''||typeof value==='undefined') return null; const n=Number(String(value).replace(',','.'));return Number.isFinite(n)?n:null; }
     function round2(value) { return Math.round((Number(value)+Number.EPSILON)*100)/100; }
-    function formatScore(value) { return value===null||typeof value==='undefined'||!Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('id-ID',{minimumFractionDigits:0,maximumFractionDigits:2}); }
+    // Revisi 33: jumlah desimal rata-rata dapat diatur (2 / 1 / 0) lewat Pengaturan.
+    const DECIMAL_MODES=[0,1,2];
+    function decimalMode(){const raw=state.appearance&&state.appearance.decimals;const value=Number(raw);return DECIMAL_MODES.indexOf(value)===-1?2:value;}
+    function decimalDigits(){return decimalMode();}
+    function syncDecimalBridge(){try{window.__bnDecimals=decimalMode();}catch(error){/* diabaikan */}}
+    function formatScore(value){
+      if(value===null||typeof value==='undefined'||!Number.isFinite(Number(value)))return '—';
+      // Pengaturan 2 desimal mempertahankan gaya lama: nol di belakang koma tidak ditampilkan
+      // ("75", bukan "75,00"), sementara 1/0 desimal mengikuti jumlah digit yang dipilih.
+      const digits=decimalDigits();
+      const factor=Math.pow(10,digits);
+      // Pembulatan setengah ke atas (seperti Excel), bukan setengah ke genap.
+      const rounded=Math.round((Number(value)+Number.EPSILON)*factor)/factor;
+      return rounded.toLocaleString('id-ID',{minimumFractionDigits:digits===2?0:digits,maximumFractionDigits:digits});
+    }
+    // Angka untuk berkas Excel/Word (selalu tanpa titik ribuan agar tetap numerik).
+    function exportNumber(value,digits){
+      if(value===null||typeof value==='undefined'||value===''||!Number.isFinite(Number(value)))return null;
+      const factor=Math.pow(10,typeof digits==='number'?digits:decimalDigits());
+      return Math.round((Number(value)+Number.EPSILON)*factor)/factor;
+    }
     function blankScore(value) { return value===null||typeof value==='undefined'?'':value; }
     function vector(values,length){const source=Array.isArray(values)?values:[];return Array.from({length:Math.max(0,length||0)},(_,i)=>source[i]===null||source[i]===''||typeof source[i]==='undefined'?null:Number(source[i]));}
     function average(values){const n=(values||[]).map(v=>typeof v==='string'?v.trim():v).filter(v=>v!==null&&typeof v!=='undefined'&&v!==''&&Number.isFinite(Number(v))).map(Number);return n.length?round2(n.reduce((a,b)=>a+b,0)/n.length):null;}
@@ -320,7 +340,7 @@ function callServer(method,args,onSuccess,busyText){
 }
 function secure(method,args,onSuccess,busyText){callServer(method,[state.sessionToken].concat(args||[]),onSuccess,busyText);}
 
-    function applyAppearance(appearance){const value=appearance||{theme:'professional',loginBackgroundDataUri:''};state.appearance={theme:value.theme==='modern'?'modern':'professional',loginBackgroundDataUri:value.loginBackgroundDataUri||''};document.body.classList.remove('theme-professional','theme-modern');document.body.classList.add(`theme-${state.appearance.theme}`);const screen=$('#authScreen');if(state.appearance.loginBackgroundDataUri){screen.style.setProperty('--login-background',`url("${state.appearance.loginBackgroundDataUri}")`);screen.classList.add('has-login-background');}else{screen.style.removeProperty('--login-background');screen.classList.remove('has-login-background');}renderAppearancePanel();}
+    function applyAppearance(appearance){const value=appearance||{theme:'professional',loginBackgroundDataUri:'',decimals:2};state.appearance={theme:value.theme==='modern'?'modern':'professional',loginBackgroundDataUri:value.loginBackgroundDataUri||'',decimals:DECIMAL_MODES.indexOf(Number(value.decimals))===-1?2:Number(value.decimals)};syncDecimalBridge();document.body.classList.remove('theme-professional','theme-modern');document.body.classList.add(`theme-${state.appearance.theme}`);const screen=$('#authScreen');if(state.appearance.loginBackgroundDataUri){screen.style.setProperty('--login-background',`url("${state.appearance.loginBackgroundDataUri}")`);screen.classList.add('has-login-background');}else{screen.style.removeProperty('--login-background');screen.classList.remove('has-login-background');}renderAppearancePanel();}
     function resetLoginFields(){const username=$('#loginUsername'),password=$('#loginPassword'),toggle=$('#toggleLoginPassword');if(username)username.value='';if(password){password.value='';password.type='password';}if(toggle){toggle.setAttribute('aria-pressed','false');toggle.setAttribute('aria-label','Tampilkan kata sandi');}}
     function toggleLoginPassword(){const input=$('#loginPassword'),button=$('#toggleLoginPassword');const visible=input.type==='text';input.type=visible?'password':'text';button.setAttribute('aria-pressed',String(!visible));button.setAttribute('aria-label',visible?'Tampilkan kata sandi':'Sembunyikan kata sandi');}
 
@@ -457,11 +477,12 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function deleteUserAccount(userId){const user=(state.users||[]).find(item=>item.id===userId);if(!user)return;if(!confirm(`Hapus akun ${user.name}? Akun tidak dapat dipulihkan.`))return;secure('deleteUser',[userId],result=>{state.users=result.users;if(state.editUserId===userId)state.editUserId=null;renderUsers();toast('Akun berhasil dihapus.','success');},'Menghapus akun…');}
     function toggleUser(button){secure('setUserActive',[button.dataset.toggleUser,button.dataset.nextActive==='true'],result=>{state.users=result.users;renderUsers();toast('Status pengguna diperbarui.','success');},'Memperbarui pengguna…');}
 
-    function renderAppearancePanel(){const theme=$('#appTheme');const preview=$('#loginBackgroundPreview');if(!theme||!preview)return;theme.value=(state.appearance&&state.appearance.theme)==='modern'?'modern':'professional';const uri=state.appearance&&state.appearance.loginBackgroundDataUri;if(uri)preview.innerHTML=`<img src="${escapeAttr(uri)}" alt="Pratinjau background login">`;else preview.textContent='Belum ada gambar background login.';}
+    function renderAppearancePanel(){const theme=$('#appTheme');const preview=$('#loginBackgroundPreview');if(!theme||!preview)return;theme.value=(state.appearance&&state.appearance.theme)==='modern'?'modern':'professional';const decimals=$('#appDecimals');if(decimals)decimals.value=String(decimalMode());const uri=state.appearance&&state.appearance.loginBackgroundDataUri;if(uri)preview.innerHTML=`<img src="${escapeAttr(uri)}" alt="Pratinjau background login">`;else preview.textContent='Belum ada gambar background login.';}
     function previewLoginBackgroundFile(){const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{$('#loginBackgroundPreview').innerHTML=`<img src="${escapeAttr(reader.result)}" alt="Pratinjau gambar yang dipilih">`;};reader.readAsDataURL(file);}
     function compressLoginBackground(file){return new Promise((resolve,reject)=>{if(!file||!/^image\/(png|jpeg|webp)$/i.test(file.type)){reject(new Error('Pilih gambar PNG, JPG, atau WEBP.'));return;}const reader=new FileReader();reader.onerror=()=>reject(new Error('Gambar tidak dapat dibaca.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('Gambar tidak dapat diproses.'));image.onload=()=>{const maxDimension=1600;const scale=Math.min(1,maxDimension/Math.max(image.width,image.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const context=canvas.getContext('2d');context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,canvas.width,canvas.height);let quality=.86;let data=canvas.toDataURL('image/jpeg',quality);while(data.length>1850000&&quality>.42){quality-=.08;data=canvas.toDataURL('image/jpeg',quality);}if(data.length>1950000){reject(new Error('Gambar masih terlalu besar setelah kompresi. Pilih gambar lain dengan ukuran lebih kecil.'));return;}resolve(data);};image.src=reader.result;};reader.readAsDataURL(file);});}
-    async function saveAppearance(){try{const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];const payload={theme:$('#appTheme').value};if(file)payload.loginBackgroundDataUri=await compressLoginBackground(file);secure('saveAppAppearance',[payload],result=>{applyAppearance(result.appearance);$('#loginBackgroundFile').value='';toast('Tema dan tampilan login berhasil disimpan.','success');},'Menyimpan tampilan aplikasi…');}catch(error){toast(messageOf(error),'error');}}
-    function clearLoginBackground(){secure('saveAppAppearance',[{theme:$('#appTheme').value,clearBackground:true}],result=>{applyAppearance(result.appearance);$('#loginBackgroundFile').value='';toast('Background login dihapus.','success');},'Menghapus background login…');}
+    function decimalSelection(){const field=$('#appDecimals');const value=Number(field&&field.value);return DECIMAL_MODES.indexOf(value)===-1?2:value;}
+    async function saveAppearance(){try{const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];const payload={theme:$('#appTheme').value,decimals:decimalSelection()};if(file)payload.loginBackgroundDataUri=await compressLoginBackground(file);secure('saveAppAppearance',[payload],result=>{applyAppearance(result.appearance||{...state.appearance,decimals:payload.decimals});$('#loginBackgroundFile').value='';renderAll();toast('Tema, desimal rata-rata, dan tampilan login berhasil disimpan.','success');},'Menyimpan tampilan aplikasi…');}catch(error){toast(messageOf(error),'error');}}
+    function clearLoginBackground(){secure('saveAppAppearance',[{theme:$('#appTheme').value,decimals:decimalSelection(),clearBackground:true}],result=>{applyAppearance(result.appearance);$('#loginBackgroundFile').value='';toast('Background login dihapus.','success');},'Menghapus background login…');}
     function resetApplication(){const password=$('#resetAdminPassword').value;const confirmed=$('#resetConfirm').checked;if(!password||!confirmed){toast('Masukkan kata sandi Pemilik/Admin dan centang konfirmasi reset.','error');return;}if(!confirm('Reset seluruh data murid, nilai, rekap, dan identitas materi? Tindakan ini tidak dapat dibatalkan.'))return;secure('resetApplicationData',[password],data=>{$('#resetAdminPassword').value='';$('#resetConfirm').checked=false;state.activeView='identity';applyData(data);toast('Seluruh data penilaian berhasil direset ke default.','success');},'Mereset seluruh data penilaian…');}
     function aboutInline(text){return escapeHtml(text).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');}
     function shouldUseAboutTemplate(text){const value=String(text||'');return !value.includes('##')&&/Fitur dan Keunggulan Utama/i.test(value)&&/Visi Pengembangan/i.test(value);}
@@ -716,7 +737,13 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     // ---------- Revisi 30: salin seluruh nilai (TES & NON TES) ke Excel / Word ----------
     // Satu sumber data untuk Guru Mapel (state) maupun Wali Kelas (state.waliData),
     // sehingga hasil salinan selalu identik dengan tabel yang sedang tampil.
+    // Nilai mentah (TES/NON TES) disalin apa adanya; rata-rata dihitung tetap memakai formatScore.
     function copyCellText(value){return value===null||typeof value==='undefined'||Number.isNaN(Number(value))?'':formatScore(value);}
+    function copyAverageText(value){
+      if(value===null||typeof value==='undefined'||!Number.isFinite(Number(value)))return '';
+      // Rata-rata selalu memakai pengaturan desimal agar sama dengan yang tampil di tabel.
+      return formatScore(value);
+    }
     function contextDescriptionOf(context){
       if(!context)return '—';
       return [context.className,context.subject,context.semester,context.academicYear].filter(Boolean).join(' · ')||'—';

@@ -221,6 +221,17 @@
     return display(objective, 'Tujuan Pembelajaran ' + (index + 1));
   }
 
+  // Revisi 33: jumlah desimal ekspor mengikuti pengaturan aplikasi (0/1/2).
+  function exportDigits(data) {
+    const raw = data && data.appearance && data.appearance.decimals;
+    const digits = Number(raw);
+    return [0, 1, 2].indexOf(digits) === -1 ? 2 : digits;
+  }
+  function roundScore(value, digits) {
+    if (value === null || value === undefined || value === '' || !isFinite(Number(value))) return value;
+    const factor = Math.pow(10, digits);
+    return Math.round((Number(value) + Number.EPSILON) * factor) / factor;
+  }
   function scoreCell(value) {
     return (value === null || value === undefined || value === '') ? '' : Number(value);
   }
@@ -240,6 +251,8 @@
     const bundle = rpc('exportExcel', args);
     return bundle.then(function (data) {
       if (!data || !data.context) throw new Error('Data ekspor tidak lengkap dari server.');
+      // Jumlah desimal mengikuti pengaturan aplikasi (appearance.decimals) bila server belum mengirimkannya.
+      if (!data.appearance && window.__bnDecimals) data.appearance = { decimals: window.__bnDecimals };
       const workbook = composeWorkbook(data);
 
       const bytes = workbook.build();
@@ -438,6 +451,9 @@
     sheet.rowHeight(5, 64);
 
     const recap = data.recap || [];
+    const DIGITS = exportDigits(data);
+    const NUMFMT = DIGITS === 0 ? '0' : (DIGITS === 1 ? '0.0' : '0.00');
+    const RAW_NUMFMT = '0.##';
     (data.students || []).forEach(function (student, index) {
       const line = 6 + index;
       const scores = (data.formative || {})[student.id] || [];
@@ -447,10 +463,10 @@
       sheet.set(line, 2, student.name, Object.assign({}, stripe, BORDER));
       for (let i = 0; i < scoreCount; i++) {
         sheet.set(line, scoreStart + i, scoreCell(scores[i]),
-          Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
+          Object.assign({ align: 'center', numFmt: RAW_NUMFMT }, stripe, BORDER));
       }
-      sheet.set(line, last, scoreCell(recap[index] && recap[index].formativeAverage),
-        Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
+      sheet.set(line, last, scoreCell(roundScore(recap[index] && recap[index].formativeAverage, DIGITS)),
+        Object.assign({ align: 'center', numFmt: NUMFMT }, stripe, BORDER));
     });
 
     sheet.freeze(5, 2);
@@ -510,6 +526,9 @@
     sheet.rowHeight(6, 18);
 
     const recap = data.recap || [];
+    const DIGITS = exportDigits(data);
+    const NUMFMT = DIGITS === 0 ? '0' : (DIGITS === 1 ? '0.0' : '0.00');
+    const RAW_NUMFMT = '0.##';
     (data.students || []).forEach(function (student, index) {
       const line = 7 + index;
       const scores = (data.summative || {})[student.id] || {};
@@ -521,12 +540,12 @@
       sheet.set(line, 2, student.name, Object.assign({}, stripe, BORDER));
       for (let i = 0; i < perSection; i++) {
         sheet.set(line, 3 + i, scoreCell(asam[i]),
-          Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
+          Object.assign({ align: 'center', numFmt: RAW_NUMFMT }, stripe, BORDER));
         sheet.set(line, 3 + perSection + i, scoreCell(asas[i]),
-          Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
+          Object.assign({ align: 'center', numFmt: RAW_NUMFMT }, stripe, BORDER));
       }
-      sheet.set(line, last, scoreCell(recap[index] && recap[index].summativeAverage),
-        Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
+      sheet.set(line, last, scoreCell(roundScore(recap[index] && recap[index].summativeAverage, DIGITS)),
+        Object.assign({ align: 'center', numFmt: NUMFMT }, stripe, BORDER));
     });
 
     sheet.freeze(6, 2);
@@ -538,6 +557,9 @@
 
   // ---- Lembar 5: REKAP NA --------------------------------------------------
   function buildRecapSheet(wb, data) {
+    const DIGITS = exportDigits(data);
+    const NUMFMT = DIGITS === 0 ? '0' : (DIGITS === 1 ? '0.0' : '0.00');
+    const RAW_NUMFMT = '0.##';
     const context = data.context || {};
     const sheet = wb.addWorksheet('REKAP NA', { tabColor: COLOR.recapTab, gridlines: false });
 
@@ -566,12 +588,12 @@
       const stripe = index % 2 === 0 ? { fill: COLOR.stripe } : {};
       sheet.set(line, 1, row.number, Object.assign({ align: 'center' }, stripe, BORDER));
       sheet.set(line, 2, row.name, Object.assign({}, stripe, BORDER));
-      sheet.set(line, 3, scoreCell(row.formativeAverage),
-        Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
-      sheet.set(line, 4, scoreCell(row.summativeAverage),
-        Object.assign({ align: 'center', numFmt: '0.00' }, stripe, BORDER));
-      sheet.set(line, 5, scoreCell(row.finalScore),
-        Object.assign({ align: 'center', numFmt: '0.00', fill: COLOR.recapColumn }, BORDER));
+      sheet.set(line, 3, scoreCell(roundScore(row.formativeAverage, DIGITS)),
+        Object.assign({ align: 'center', numFmt: NUMFMT }, stripe, BORDER));
+      sheet.set(line, 4, scoreCell(roundScore(row.summativeAverage, DIGITS)),
+        Object.assign({ align: 'center', numFmt: NUMFMT }, stripe, BORDER));
+      sheet.set(line, 5, scoreCell(roundScore(row.finalScore, DIGITS)),
+        Object.assign({ align: 'center', numFmt: NUMFMT, fill: COLOR.recapColumn }, BORDER));
     });
 
     sheet.rowHeight(5, 34);
