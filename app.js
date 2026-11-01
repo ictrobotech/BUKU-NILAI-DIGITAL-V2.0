@@ -54,6 +54,65 @@
     function roleLabel(role){return role==='ADMIN'?'Pemilik / Admin':role==='GURU'?'Guru Mapel — hanya baca':'Wali Kelas — salin & unduh';}
     function currentSelection(){if(!state.context)return{};return {className:state.context.className,subject:state.context.subject,semester:state.context.semester,academicYear:state.context.academicYear};}
     function contextDescription(){return state.context?`${state.context.className} · ${state.context.subject} · ${state.context.semester} · ${state.context.academicYear}`:'—';}
+    // ---------- Revisi 32: urutan akun pada Manajemen Akses ----------
+    // Urutan baku rombel (VII -> IX) agar daftar akun tidak lagi mengikuti urutan abjad
+    // (yang menaruh "VIII" sebelum "VII"). Nama kelas dibandingkan tanpa spasi/tanda baca
+    // supaya variasi penulisan seperti "VII RA Kartini", "VII RA-KARTINI", atau
+    // "VII RA KARTINI" tetap terbaca sama.
+    const CLASS_ORDER = [
+      'VII KH DEWANTARA',
+      'VII AHMAD DAHLAN',
+      'VII RA KARTINI',
+      'VII AHMAD YANI',
+      'VIII AGUS SALIM',
+      'VIII SIS AL JUFRI',
+      'VIII ADAM MALIK',
+      'VIII TADULAKO',
+      'IX TOMBOLOTUTU',
+      'IX S HASANUDIN',
+      'IX HJ HAYUN',
+      'IX KARANJALEMBA'
+    ].map(name=>name.toUpperCase().replace(/[^A-Z0-9]/g,''));
+    function classOrderKey(name){
+      const original=String(name||'');
+      const normalized=original.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      const exact=CLASS_ORDER.indexOf(normalized);
+      if(exact!==-1)return {tier:0,index:exact};
+      // Kelas lain (atau variasi nama): tetap dikelompokkan per tingkat, urut abjad.
+      const level=normalized.slice(0,4)==='VIII'?'VIII':normalized.slice(0,3)==='VII'?'VII':normalized.slice(0,2)==='IX'?'IX':'';
+      const tier=level?['VII','VIII','IX'].indexOf(level)+1:4;
+      return {tier,index:tier,key:normalized,original};
+    }
+    function compareClassName(a,b){
+      const ka=classOrderKey(a),kb=classOrderKey(b);
+      if(ka.tier!==kb.tier)return ka.tier-kb.tier;
+      if(ka.tier===0)return ka.index-kb.index;
+      if(ka.tier===4){const byLevel=String(a||'').localeCompare(String(b||''),'id',{numeric:true});if(byLevel!==0)return byLevel;}
+      const byName=String(a||'').localeCompare(String(b||''),'id',{numeric:true,sensitivity:'base'});
+      return byName;
+    }
+    function sortClassProfiles(profiles){return (profiles||[]).slice().sort((a,b)=>compareClassName(a.className,b.className));}
+    function subjectRank(subject,list){const index=list.indexOf(subject);return index===-1?list.length:index;}
+    function userAccessLabel(user){
+      const subjects=Array.isArray(user.subjects)&&user.subjects.length?user.subjects:(user.subject?[user.subject]:[]);
+      const ordered=subjects.slice().sort((a,b)=>subjectRank(a,state.subjects||[])-subjectRank(b,state.subjects||[]));
+      return {subjects:ordered,text:[ordered.join(', '),user.className].filter(Boolean).join(' · ')||'Semua konteks'};
+    }
+    // Pemilik/Admin selalu paling atas; akun guru mengikuti susunan kelas, lalu mapel, lalu nama.
+    function sortUsersForAccess(users){
+      const roleRank={ADMIN:0,GURU:1,WALI_KELAS:2};
+      return (users||[]).slice().sort((a,b)=>{
+        const roleDiff=(roleRank[a.role]===undefined?9:roleRank[a.role])-(roleRank[b.role]===undefined?9:roleRank[b.role]);
+        if(roleDiff!==0)return roleDiff;
+        if(a.role==='ADMIN')return String(a.name||'').localeCompare(String(b.name||''),'id');
+        const firstSubject=user=>{const u=userAccessLabel(user);return u.subjects.length?u.subjects[0]:'';};
+        const byClass=compareClassName(a.className||'',b.className||'');
+        if(byClass!==0)return byClass;
+        const sa=firstSubject(a),sb=firstSubject(b);
+        if(sa!==sb)return subjectRank(sa,state.subjects||[])-subjectRank(sb,state.subjects||[]);
+        return String(a.name||'').localeCompare(String(b.name||''),'id');
+      });
+    }
     function classProfile(className){return state.classProfiles.find(item=>item.className===className)||null;}
     function classLabel(className){const p=classProfile(className);return `${className}${p?` · Wali: ${p.homeroomTeacher||'Belum diatur'}`:''}`;}
     function setBusy(on,text){const overlay=$('#loadingOverlay');if(text)$('#loadingText').textContent=text||'Memproses…';overlay.classList.toggle('show',Boolean(on));}
@@ -355,7 +414,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       }
       proceed();
     }
-    function renderClassOptions(select,selected,includeWali=true){select.innerHTML=state.classProfiles.map(p=>`<option value="${escapeAttr(p.className)}">${escapeHtml(includeWali?classLabel(p.className):p.className)}</option>`).join('');select.value=selected||state.classes[0]||'';}
+    function renderClassOptions(select,selected,includeWali=true){select.innerHTML=sortClassProfiles(state.classProfiles).map(p=>`<option value="${escapeAttr(p.className)}">${escapeHtml(includeWali?classLabel(p.className):p.className)}</option>`).join('');select.value=selected||state.classes[0]||'';}
     function renderSubjectOptions(select,selected,allowedSubjects){const source=Array.isArray(allowedSubjects)&&allowedSubjects.length?allowedSubjects:(state.subjects||[]);const subjects=Array.from(new Set([selected].concat(source).filter(Boolean)));select.innerHTML=subjects.map(subject=>`<option value="${escapeAttr(subject)}">${escapeHtml(subject)}</option>`).join('');select.value=selected||subjects[0]||'';}
     function renderIdentity(){
       if(!state.context)return;
@@ -381,7 +440,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       // Revisi 27: baca dulu isi kolom yang sedang diketik agar tidak hilang saat panel
       // dibangun ulang oleh polling presence admin (tiap 30 detik).
       const terisi={};$$('[data-homeroom-class]').forEach(input=>{terisi[input.dataset.homeroomClass]=input.value;});
-      const locked=state.homeroomLocked;body.innerHTML=state.classProfiles.map(p=>{const wali=(state.users||[]).find(user=>user.role==='WALI_KELAS'&&user.className===p.className&&user.active);const presence=wali?` <span class="presence-status" title="${wali.online?'Wali kelas sedang online':'Wali kelas offline'}"><i class="presence-dot ${wali.online?'online':'offline'}"></i>${wali.online?'Online':'Offline'}</span>`:'';return `<tr><td>${escapeHtml(p.className)}${presence}</td><td><input class="homeroom-input" data-homeroom-class="${escapeAttr(p.className)}" maxlength="120" value="${escapeAttr(terisi.hasOwnProperty(p.className)?terisi[p.className]:(p.homeroomTeacher||''))}" placeholder="Masukkan nama wali kelas" ${locked?'disabled':''}></td></tr>`;}).join('');$('#saveHomeroomButton').hidden=locked;$('#unlockHomeroomButton').hidden=!locked;$('#homeroomLockNote').innerHTML=locked?`${svg('lock')}<div><strong>Daftar wali kelas terkunci.</strong> Nama yang sudah disimpan tidak dapat diubah atau dihapus secara langsung. Klik <b>Buka Pengeditan</b> bila pemilik ingin memperbarui data.</div>`:`${svg('info')}<div><strong>Mode pengeditan aktif.</strong> Kolom kosong menampilkan hint “Masukkan nama wali kelas”. Klik <b>Simpan & Kunci</b> setelah data selesai.</div>`;}
+      const locked=state.homeroomLocked;body.innerHTML=sortClassProfiles(state.classProfiles).map(p=>{const wali=(state.users||[]).find(user=>user.role==='WALI_KELAS'&&user.className===p.className&&user.active);const presence=wali?` <span class="presence-status" title="${wali.online?'Wali kelas sedang online':'Wali kelas offline'}"><i class="presence-dot ${wali.online?'online':'offline'}"></i>${wali.online?'Online':'Offline'}</span>`:'';return `<tr><td>${escapeHtml(p.className)}${presence}</td><td><input class="homeroom-input" data-homeroom-class="${escapeAttr(p.className)}" maxlength="120" value="${escapeAttr(terisi.hasOwnProperty(p.className)?terisi[p.className]:(p.homeroomTeacher||''))}" placeholder="Masukkan nama wali kelas" ${locked?'disabled':''}></td></tr>`;}).join('');$('#saveHomeroomButton').hidden=locked;$('#unlockHomeroomButton').hidden=!locked;$('#homeroomLockNote').innerHTML=locked?`${svg('lock')}<div><strong>Daftar wali kelas terkunci.</strong> Nama yang sudah disimpan tidak dapat diubah atau dihapus secara langsung. Klik <b>Buka Pengeditan</b> bila pemilik ingin memperbarui data.</div>`:`${svg('info')}<div><strong>Mode pengeditan aktif.</strong> Kolom kosong menampilkan hint “Masukkan nama wali kelas”. Klik <b>Simpan & Kunci</b> setelah data selesai.</div>`;}
     function saveHomerooms(){const values={};$$('[data-homeroom-class]').forEach(input=>{values[input.dataset.homeroomClass]=input.value.trim();});const profiles=state.classProfiles.map(p=>({className:p.className,homeroomTeacher:Object.prototype.hasOwnProperty.call(values,p.className)?values[p.className]:p.homeroomTeacher}));secure('saveHomeroomTeachers',[profiles],result=>{state.classProfiles=result.classProfiles;state.homeroomLocked=Boolean(result.homeroomLocked);renderAll();toast('Nama wali kelas berhasil disimpan dan daftar dikunci.','success');},'Menyimpan dan mengunci wali kelas…');}
     function unlockHomerooms(){secure('unlockHomeroomTeachers',[],result=>{state.homeroomLocked=Boolean(result.homeroomLocked);renderHomeroomManager();toast('Pengeditan daftar wali kelas dibuka.','success');},'Membuka pengeditan wali kelas…');}
     function renderUsers(forceClear){const classSelect=$('#newUserClass');if(!classSelect)return;
@@ -390,8 +449,8 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       // dan menghapus teks yang sedang diketik (nama/username/sandi/mapel/kelas akun baru).
       const sebelum={name:$('#newUserName').value,username:$('#newUserUsername').value,password:$('#newUserPassword').value,role:$('#newUserRole').value,className:classSelect.value,subjects:$$('[data-new-user-subject]:checked').map(input=>input.dataset.newUserSubject)};
       const adaIsian=sebelum.name!==''||sebelum.username!==''||sebelum.password!==''||Boolean(sebelum.className)||sebelum.subjects.length>0;
-      const editing=(state.users||[]).find(user=>user.id===state.editUserId)||null;classSelect.innerHTML='<option value="">Semua Kelas (Khusus Guru Mapel)</option>'+state.classProfiles.map(p=>`<option value="${escapeAttr(p.className)}">${escapeHtml(p.className)}</option>`).join('');const editSubjects=editing&&Array.isArray(editing.subjects)?editing.subjects:(editing&&editing.subject?[editing.subject]:(!forceClear&&adaIsian?sebelum.subjects:[]));const checklist=$('#newUserSubjectsChecklist');checklist.innerHTML=state.subjects.map(subject=>`<label class="subject-check-option"><input type="checkbox" data-new-user-subject="${escapeAttr(subject)}" ${editSubjects.indexOf(subject)!==-1?'checked':''}><span>${escapeHtml(subject)}</span></label>`).join('');if(editing){$('#newUserName').value=editing.name||'';$('#newUserUsername').value=editing.username||'';$('#newUserPassword').value='';$('#newUserPassword').placeholder='Kosongkan bila tidak diubah';$('#newUserRole').value=editing.role;classSelect.value=editing.className||'';$('#createUserButton').textContent='Simpan Perubahan Akun';$('#cancelEditUserButton').hidden=false;}else if(!forceClear&&adaIsian){$('#newUserName').value=sebelum.name;$('#newUserUsername').value=sebelum.username;$('#newUserPassword').value=sebelum.password;$('#newUserPassword').placeholder='Minimal 8 karakter';$('#newUserRole').value=sebelum.role||'GURU';classSelect.value=sebelum.className||'';$('#createUserButton').textContent='Tambah Akun Akses';$('#cancelEditUserButton').hidden=true;}
-      else{$('#newUserName').value='';$('#newUserUsername').value='';$('#newUserPassword').value='';$('#newUserPassword').placeholder='Minimal 8 karakter';$('#newUserRole').value='GURU';classSelect.value='';$('#createUserButton').textContent='Tambah Akun Akses';$('#cancelEditUserButton').hidden=true;}const body=$('#usersTableBody');if(!isAdmin()){body.innerHTML='';return;}body.innerHTML=(state.users||[]).map(user=>{const subjects=Array.isArray(user.subjects)&&user.subjects.length?user.subjects:(user.subject?[user.subject]:[]);const access=[subjects.join(', '),user.className].filter(Boolean).join(' · ')||'Semua konteks';const presence=(user.role==='GURU'||user.role==='WALI_KELAS')?`<br><span class="presence-status"><i class="presence-dot ${user.online?'online':'offline'}"></i>${user.online?'Online':'Offline'}</span>`:'';const manageable=user.id!==state.user.id&&user.role!=='ADMIN';const actions=manageable?`<div class="inline-actions" style="justify-content:center"><button class="button secondary compact" type="button" data-edit-user="${escapeAttr(user.id)}">Ubah</button><button class="button danger compact" type="button" data-delete-user="${escapeAttr(user.id)}">Hapus</button><button class="button ${user.active?'danger':'secondary'} compact" type="button" data-toggle-user="${escapeAttr(user.id)}" data-next-active="${user.active?'false':'true'}">${user.active?'Nonaktifkan':'Aktifkan'}</button></div>`:'—';return `<tr><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.username)}</td><td><span class="access-role ${escapeAttr(user.role)}">${escapeHtml(roleLabel(user.role))}</span></td><td>${escapeHtml(access)}</td><td>${user.active?'<span class="tag">Aktif</span>':'<span class="tag" style="color:#8d3440;background:#fff0f2">Nonaktif</span>'}${presence}</td><td class="center">${actions}</td></tr>`;}).join('')||`<tr><td colspan="6"><div class="empty-state">${svg('users')}<b>Belum ada akun tambahan</b></div></td></tr>`;}
+      const editing=(state.users||[]).find(user=>user.id===state.editUserId)||null;classSelect.innerHTML='<option value="">Semua Kelas (Khusus Guru Mapel)</option>'+sortClassProfiles(state.classProfiles).map(p=>`<option value="${escapeAttr(p.className)}">${escapeHtml(p.className)}</option>`).join('');const editSubjects=editing&&Array.isArray(editing.subjects)?editing.subjects:(editing&&editing.subject?[editing.subject]:(!forceClear&&adaIsian?sebelum.subjects:[]));const checklist=$('#newUserSubjectsChecklist');checklist.innerHTML=state.subjects.map(subject=>`<label class="subject-check-option"><input type="checkbox" data-new-user-subject="${escapeAttr(subject)}" ${editSubjects.indexOf(subject)!==-1?'checked':''}><span>${escapeHtml(subject)}</span></label>`).join('');if(editing){$('#newUserName').value=editing.name||'';$('#newUserUsername').value=editing.username||'';$('#newUserPassword').value='';$('#newUserPassword').placeholder='Kosongkan bila tidak diubah';$('#newUserRole').value=editing.role;classSelect.value=editing.className||'';$('#createUserButton').textContent='Simpan Perubahan Akun';$('#cancelEditUserButton').hidden=false;}else if(!forceClear&&adaIsian){$('#newUserName').value=sebelum.name;$('#newUserUsername').value=sebelum.username;$('#newUserPassword').value=sebelum.password;$('#newUserPassword').placeholder='Minimal 8 karakter';$('#newUserRole').value=sebelum.role||'GURU';classSelect.value=sebelum.className||'';$('#createUserButton').textContent='Tambah Akun Akses';$('#cancelEditUserButton').hidden=true;}
+      else{$('#newUserName').value='';$('#newUserUsername').value='';$('#newUserPassword').value='';$('#newUserPassword').placeholder='Minimal 8 karakter';$('#newUserRole').value='GURU';classSelect.value='';$('#createUserButton').textContent='Tambah Akun Akses';$('#cancelEditUserButton').hidden=true;}const body=$('#usersTableBody');if(!isAdmin()){body.innerHTML='';return;}body.innerHTML=sortUsersForAccess(state.users).map(user=>{const access=userAccessLabel(user).text;const presence=(user.role==='GURU'||user.role==='WALI_KELAS')?`<br><span class="presence-status"><i class="presence-dot ${user.online?'online':'offline'}"></i>${user.online?'Online':'Offline'}</span>`:'';const manageable=user.id!==state.user.id&&user.role!=='ADMIN';const actions=manageable?`<div class="inline-actions" style="justify-content:center"><button class="button secondary compact" type="button" data-edit-user="${escapeAttr(user.id)}">Ubah</button><button class="button danger compact" type="button" data-delete-user="${escapeAttr(user.id)}">Hapus</button><button class="button ${user.active?'danger':'secondary'} compact" type="button" data-toggle-user="${escapeAttr(user.id)}" data-next-active="${user.active?'false':'true'}">${user.active?'Nonaktifkan':'Aktifkan'}</button></div>`:'—';return `<tr><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.username)}</td><td><span class="access-role ${escapeAttr(user.role)}">${escapeHtml(roleLabel(user.role))}</span></td><td>${escapeHtml(access)}</td><td>${user.active?'<span class="tag">Aktif</span>':'<span class="tag" style="color:#8d3440;background:#fff0f2">Nonaktif</span>'}${presence}</td><td class="center">${actions}</td></tr>`;}).join('')||`<tr><td colspan="6"><div class="empty-state">${svg('users')}<b>Belum ada akun tambahan</b></div></td></tr>`;}
     function resetUserEditor(){state.editUserId=null;renderUsers(true);}
     function beginEditUser(userId){const user=(state.users||[]).find(item=>item.id===userId);if(!user)return;state.editUserId=user.id;renderUsers();const field=$('#newUserName');if(field&&typeof field.scrollIntoView==='function')field.scrollIntoView({behavior:'smooth',block:'center'});}
     function createUser(){const payload={name:$('#newUserName').value.trim(),username:$('#newUserUsername').value.trim(),password:$('#newUserPassword').value,role:$('#newUserRole').value,subjects:$$('[data-new-user-subject]:checked').map(input=>input.dataset.newUserSubject),className:$('#newUserClass').value};const editing=state.editUserId;const method=editing?'updateUser':'createUser';const args=editing?[editing,payload]:[payload];secure(method,args,result=>{state.users=result.users;state.editUserId=null;renderUsers(true);toast(editing?'Akun berhasil diperbarui.':'Akun akses berhasil dibuat.','success');},editing?'Menyimpan perubahan akun…':'Membuat Akun Akses…');}
