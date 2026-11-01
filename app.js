@@ -654,11 +654,80 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function waliSummativeTable(data){const materials=safeMaterials(data.context.materials),per=data.scoreCounts.summative;const asam=materials.map((m,i)=>`<th class="asam-group" colspan="2">ASAM ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),asas=materials.map((m,i)=>`<th class="asas-group" colspan="2">ASAS ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),heads=Array.from({length:materials.length*2},()=>'<th class="objective-head">TES</th><th class="objective-head">NON<br>TES</th>').join('');const rows=data.students.map((s,i)=>{const source=data.summative[s.id]||{},a=vector(source.asam,per),b=vector(source.asas,per);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${a.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}${b.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}<td class="score-average">${formatScore(average(a.concat(b)))}</td></tr>`;}).join('');return `${scoreScrollControls('wali-summative','Sumatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-summative"><table class="score-table"><thead><tr><th class="sticky-no" rowspan="3">NO</th><th class="sticky-name" rowspan="3">NAMA</th><th class="asam-group" colspan="${per}">ASESMEN SUMATIF AKHIR MATERI</th><th class="asas-group" colspan="${per}">ASESMEN SUMATIF AKHIR SEMESTER</th><th rowspan="3">RATA-RATA<br>SUMATIF</th></tr><tr>${asam}${asas}</tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${per*2+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
     function renderWaliMaterials(){const data=state.waliData;const wrap=$('#waliMaterialsWrap');if(!data||!wrap)return;const materials=safeMaterials(data.context.materials);wrap.innerHTML=`<div class="wali-materials-heading"><span>Lingkup Materi & Tujuan Pembelajaran</span><span class="tag">${materials.length} Lingkup</span></div><div class="wali-material-list">${materials.map((material,index)=>`<article class="wali-material-card"><b>${index+1}. ${escapeHtml(materialTitleLabel(material,index))}</b><ul>${material.objectives.map((objective,objectiveIndex)=>`<li>TP ${objectiveIndex+1}: ${escapeHtml(objectiveLabel(objective,objectiveIndex))}</li>`).join('')}</ul></article>`).join('')}</div>`;}
     function renderWaliTables(){const data=state.waliData;if(!data)return;const f=$('#waliFormativeWrap'),s=$('#waliSummativeWrap');f.innerHTML=waliFormativeTable(data);s.innerHTML=waliSummativeTable(data);f.hidden=state.waliTab!=='formative';s.hidden=state.waliTab!=='summative';setupScoreScroll('wali-formative',f);setupScoreScroll('wali-summative',s);$$('[data-wali-tab]').forEach(button=>button.classList.toggle('active',button.dataset.waliTab===state.waliTab));}
+    // ---------- Revisi 30: salin seluruh nilai (TES & NON TES) ke Excel / Word ----------
+    // Satu sumber data untuk Guru Mapel (state) maupun Wali Kelas (state.waliData),
+    // sehingga hasil salinan selalu identik dengan tabel yang sedang tampil.
+    function copyCellText(value){return value===null||typeof value==='undefined'||Number.isNaN(Number(value))?'':formatScore(value);}
+    function contextDescriptionOf(context){
+      if(!context)return '—';
+      return [context.className,context.subject,context.semester,context.academicYear].filter(Boolean).join(' · ')||'—';
+    }
+    function scoreSource(data){
+      const useWali=Boolean(data);
+      const context=useWali?data.context:(state.context||null);
+      if(!context)return null;
+      const counts=(useWali?data.scoreCounts:state.scoreCounts)||{formative:0,summative:0};
+      const readFormative=id=>(useWali?vector(data.formative[id],counts.formative):formattedScores(id));
+      const readSummative=id=>{
+        const source=(useWali?data.summative:state.summative)[id]||{};
+        return {asam:vector(source.asam,counts.summative),asas:vector(source.asas,counts.summative)};
+      };
+      return {
+        context,
+        description:contextDescriptionOf(context),
+        students:(useWali?data.students:state.students)||[],
+        readFormative,
+        readSummative,
+      };
+    }
+    function scoreMatrix(kind,data){
+      const source=scoreSource(data);
+      if(!source)return {title:'',description:'',headers:[],rows:[]};
+      const materials=safeMaterials(source.context.materials);
+      const columns=[];
+      if(kind==='formative'){
+        materials.forEach((material,mi)=>{
+          const count=Math.max(1,material.objectives.length);
+          for(let oi=0;oi<count;oi+=1)columns.push(`Lingkup ${mi+1} - TP ${oi+1}`);
+        });
+        const headers=['NO','NAMA',...columns,'RATA-RATA FORMATIF'];
+        const rows=source.students.map((student,index)=>{
+          const scores=source.readFormative(student.id);
+          return [String(index+1),student.name||'',...scores.slice(0,columns.length).map(copyCellText),formatScore(average(scores))];
+        });
+        return {title:'NILAI FORMATIF',description:source.description,headers,rows};
+      }
+      materials.forEach((m,mi)=>columns.push(`ASAM ${mi+1} - TES`,`ASAM ${mi+1} - NON TES`));
+      materials.forEach((m,mi)=>columns.push(`ASAS ${mi+1} - TES`,`ASAS ${mi+1} - NON TES`));
+      const headers=['NO','NAMA',...columns,'RATA-RATA SUMATIF'];
+      const rows=source.students.map((student,index)=>{
+        const scores=source.readSummative(student.id);
+        const all=scores.asam.concat(scores.asas);
+        return [String(index+1),student.name||'',...all.map(copyCellText),formatScore(average(all))];
+      });
+      return {title:'NILAI SUMATIF',description:source.description,headers,rows};
+    }
+    // Tab-separated: kolom tetap lurus saat ditempel ke Excel (tiap sel 1 kolom) maupun Word.
+    function scoreCopyText(kind,data){
+      const {title,description,headers,rows}=scoreMatrix(kind,data);
+      if(!headers.length)return '';
+      const lines=[[`${title} - ${description}`],[],headers,...rows];
+      return lines.map(row=>row.map(cell=>String(cell==null?'':cell).replace(/[\t\r\n]+/g,' ')).join('\t')).join('\r\n');
+    }
+    function copyScoreTable(kind,data){
+      const source=scoreSource(data);
+      if(!source){toast('Pilih identitas pembelajaran terlebih dahulu.','error');return;}
+      if(!source.students.length){toast('Belum ada data murid untuk disalin.','error');return;}
+      const {title}=scoreMatrix(kind,data);
+      writeClipboard(scoreCopyText(kind,data))
+        .then(()=>toast(`${title} (NO, NAMA, TES, NON TES, rata-rata) berhasil disalin: tempel ke Excel/Word.`,'success'))
+        .catch(error=>toast('Nilai tidak dapat disalin: '+messageOf(error),'error'));
+    }
     function copyScoreValue(value){return value===null||typeof value==='undefined'||Number.isNaN(Number(value))?'':formatScore(value);}
     function waliCopyText(tab){const data=state.waliData;if(!data)return '';if(tab==='formative'){return data.students.map(student=>vector(data.formative[student.id],data.scoreCounts.formative).map(copyScoreValue).join('\t')).join('\n');}return data.students.map(student=>{const source=data.summative[student.id]||{};return vector(source.asam,data.scoreCounts.summative).concat(vector(source.asas,data.scoreCounts.summative)).map(copyScoreValue).join('\t');}).join('\n');}
     function waliMaterialsText(){const data=state.waliData;if(!data)return '';const lines=[['LINGKUP MATERI','TUJUAN PEMBELAJARAN']];safeMaterials(data.context.materials).forEach((material,materialIndex)=>{material.objectives.forEach((objective,objectiveIndex)=>{lines.push([materialTitleLabel(material,materialIndex),`TP ${objectiveIndex+1}: ${objectiveLabel(objective,objectiveIndex)}`]);});});return lines.map(row=>row.join('\t')).join('\n');}
     function writeClipboard(text){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(text);return new Promise((resolve,reject)=>{const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{const ok=document.execCommand('copy');area.remove();ok?resolve():reject(new Error('Browser menolak clipboard.'));}catch(error){area.remove();reject(error);}});}
-    function copyWaliTable(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}writeClipboard(waliCopyText(state.waliTab)).then(()=>toast(`Nilai ${state.waliTab==='formative'?'Formatif':'Sumatif'} berhasil disalin tanpa nama dan rata-rata.`, 'success')).catch(error=>toast('Nilai tidak dapat disalin: '+messageOf(error),'error'));}
+    function copyWaliTable(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}copyScoreTable(state.waliTab,state.waliData);}
     function copyWaliMaterials(){if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}writeClipboard(waliMaterialsText()).then(()=>toast('Lingkup materi dan tujuan pembelajaran berhasil disalin.','success')).catch(error=>toast('Materi tidak dapat disalin: '+messageOf(error),'error'));}
 
     // ---------- Event ----------
@@ -671,7 +740,9 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       injectScoreStyles();
       document.addEventListener('keydown',handleScoreKeydown);
       document.addEventListener('paste',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input.score-input[data-score-kind]'))return;const clip=event.clipboardData||window.clipboardData||null;const text=clip&&typeof clip.getData==='function'?String(clip.getData('text')):'';if(text==='')return;event.preventDefault();applyScorePaste(input,text);});
-      $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
+      $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);
+      const copyFormativeButton=$('#copyFormativeButton');if(copyFormativeButton)copyFormativeButton.addEventListener('click',()=>copyScoreTable('formative'));
+      const copySummativeButton=$('#copySummativeButton');if(copySummativeButton)copySummativeButton.addEventListener('click',()=>copyScoreTable('summative'));['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
       $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialsButton').addEventListener('click',copyWaliMaterials);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
     }
     document.addEventListener('DOMContentLoaded',()=>{bindEvents();if(window.innerWidth<=820){$('#appShell').classList.add('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded','false');}bootstrap();});
