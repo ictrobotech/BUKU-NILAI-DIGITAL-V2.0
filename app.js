@@ -136,11 +136,16 @@
     function decimalDigits(){return decimalMode();}
     // Jumlah desimal efektif untuk sebuah konteks: pengaturan Pemilik/Admin menimpa
     // pilihan lokal (perangkat) bila konteks/data tersebut membawa nilainya.
-    function digitsFor(data){
+    // Angka desimal yang benar-benar berlaku: pengaturan Pemilik (global) menang,
+    // lalu pengaturan konteks/mapel, lalu preferensi perangkat.
+    function effectiveDecimals(data){
+      const global=storedGlobalDecimals();
+      if(global!==null)return global;
       const raw=data&&data.decimals;
       if(raw!==null&&raw!==undefined&&raw!==''){const value=Number(raw);if(DECIMAL_MODES.indexOf(value)!==-1)return value;}
       return decimalMode();
     }
+    function digitsFor(data){return effectiveDecimals(data);}
     // Pengaturan desimal yang dipakai saat menyimpan identitas/materi (ikut tersimpan di server).
     function contextDecimals(){return decimalMode();}
     // Ambil pengaturan desimal dari sebuah konteks/data (dikirim server) tanpa menimpanya bila kosong.
@@ -614,7 +619,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       $$('.nav-item[data-view-target]').forEach(btn=>{btn.hidden=allowed.indexOf(btn.dataset.viewTarget)===-1;});$('#sidebarLogoutButton').hidden=isAdmin();$('#logoutButton').hidden=!isAdmin();
       if(allowed.indexOf(state.activeView)===-1)state.activeView=isWali()?'recap':'identity';
       // Pengaturan desimal hanya milik pemilik/guru mapel; wali kelas memakai desimal yang sudah ditetapkan pemilik mapel.
-      $('#normalRecap').hidden=isWali();$('#decimalQuickBox').hidden=isWali();$('#exportActions').hidden=!isAdmin();$('#waliCopyPanel').hidden=!isWali();
+      $('#normalRecap').hidden=isWali();$('#decimalQuickBox').hidden=true;$('#exportActions').hidden=!isAdmin();$('#waliCopyPanel').hidden=!isWali();
       $('#roleIdentityNote').hidden=!isGuru();
       if(isWali())$('#recapIntro').textContent='Pilih mata pelajaran pada kelas yang dipegang, lalu salin atau unduh pengisian nilai Formatif dan Sumatif.';
       else $('#recapIntro').textContent=isGuru()?'Akun guru berada dalam mode baca. Nilai tidak dapat disalin, diunduh, atau diubah dari akun ini.':'Rekap akhir dihitung otomatis dari nilai formatif dan sumatif pada konteks aktif.';
@@ -848,7 +853,12 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       // Terapkan & ingat pilihan segera agar tabel langsung berubah, walau server belum mendukung field ini.
       state.appearance={...state.appearance,theme:payload.theme,decimals:payload.decimals};rememberDecimals(payload.decimals);syncDecimalBridge();renderAll();
       if(file)payload.loginBackgroundDataUri=await compressLoginBackground(file);
-      secure('saveAppAppearance',[payload],result=>{applyAppearance({...(result.appearance||{}),decimals:payload.decimals});$('#loginBackgroundFile').value='';renderAll();toast('Tema, desimal rata-rata, dan tampilan login berhasil disimpan.','success');},'Menyimpan tampilan aplikasi…');}catch(error){toast(messageOf(error),'error');}}
+      // Pilihan desimal dari halaman Pengaturan memakai jalur yang sama dengan kotak desimal:
+      // Pemilik -> GLOBAL semua mapel, guru mapel -> per mapel. Jadi tidak pernah setengah tersimpan.
+      if(isAdmin())persistGlobalDecimals(payload.decimals);
+      else persistContextDecimals(payload.decimals);
+      rememberContextDecimals(state.context,payload.decimals);
+      secure('saveAppAppearance',[payload],result=>{applyAppearance({...(result.appearance||{}),decimals:payload.decimals});$('#loginBackgroundFile').value='';renderAll();toast(isAdmin()?'Tema, desimal (berlaku semua mapel), dan tampilan login berhasil disimpan.':'Tema, desimal rata-rata, dan tampilan login berhasil disimpan.','success');},'Menyimpan tampilan aplikasi…');}catch(error){toast(messageOf(error),'error');}}
     function clearLoginBackground(){secure('saveAppAppearance',[{theme:$('#appTheme').value,decimals:decimalSelection(),clearBackground:true}],result=>{applyAppearance(result.appearance);$('#loginBackgroundFile').value='';toast('Background login dihapus.','success');},'Menghapus background login…');}
     function resetApplication(){const password=$('#resetAdminPassword').value;const confirmed=$('#resetConfirm').checked;if(!password||!confirmed){toast('Masukkan kata sandi Pemilik/Admin dan centang konfirmasi reset.','error');return;}if(!confirm('Reset seluruh data murid, nilai, rekap, dan identitas materi? Tindakan ini tidak dapat dibatalkan.'))return;secure('resetApplicationData',[password],data=>{$('#resetAdminPassword').value='';$('#resetConfirm').checked=false;state.activeView='identity';applyData(data);toast('Seluruh data penilaian berhasil direset ke default.','success');},'Mereset seluruh data penilaian…');}
     function aboutInline(text){return escapeHtml(text).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');}
@@ -1271,7 +1281,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);
       const copyFormativeButton=$('#copyFormativeButton');if(copyFormativeButton)copyFormativeButton.addEventListener('click',()=>copyScoreTable('formative'));
       const copySummativeButton=$('#copySummativeButton');if(copySummativeButton)copySummativeButton.addEventListener('click',()=>copyScoreTable('summative'));['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
-      $('#exportExcelButton').addEventListener('click',exportExcel);const __decBox=$('#decimalQuickBox');if(__decBox)__decBox.hidden=isWali();
+      $('#exportExcelButton').addEventListener('click',exportExcel);const __decBox=$('#decimalQuickBox');if(__decBox)__decBox.hidden=true;
       $('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);
       ['waliSubject','waliClassName','waliSemester','waliAcademicYear'].forEach(id=>{
         const field=$('#'+id);
