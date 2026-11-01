@@ -516,14 +516,105 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       updateScoreInput(input);
     }
     function moveScoreFocus(input,rowsAhead){
-      const table=input.closest('table');if(!table)return;
-      const rowLength=input.closest('tr').querySelectorAll('input.score-input').length;
-      if(!rowLength)return;
-      const all=Array.from(table.querySelectorAll('tbody input.score-input'));
-      const idx=all.indexOf(input);if(idx===-1)return;
-      const target=all[idx+rowLength*rowsAhead];
-      if(target){target.focus();if(target.value)target.select();}
+      moveScoreFocusBy(input,rowsAhead,0);
     }
+    // ---------- Navigasi keyboard sel nilai: panah atas/bawah/kiri/kanan (Revisi 29) ----------
+    function scoreGrid(input){
+      const table=input.closest('table');if(!table)return null;
+      const grid=Array.from(table.querySelectorAll('tbody tr')).map(tr=>Array.from(tr.querySelectorAll('input.score-input')));
+      const rowIndex=grid.findIndex(row=>row.indexOf(input)!==-1);
+      if(rowIndex===-1)return null;
+      return {grid,rowIndex,colIndex:grid[rowIndex].indexOf(input)};
+    }
+    function commitScoreValue(input){
+      // Navigasi tidak boleh gagal hanya karena penyimpanan nilai error.
+      try{ if(input.value!=='')applyScoreValue(input,input.value);else updateScoreInput(input); }catch(error){ console.warn('Nilai belum tersimpan:',error); }
+    }
+    function focusScoreInput(input,selectAll){
+      if(!input)return false;
+      input.focus();
+      if(selectAll!==false&&typeof input.select==='function')input.select();
+      revealScoreInput(input);
+      return true;
+    }
+    // rowStep: pindah baris (murid) • colStep: pindah sel dalam baris yang sama
+    function moveScoreFocusBy(input,rowStep,colStep){
+      const info=scoreGrid(input);if(!info)return false;
+      const {grid,rowIndex,colIndex}=info,row=grid[rowIndex];
+      commitScoreValue(input);
+      let target=null;
+      if(colStep===Number.NEGATIVE_INFINITY)target=row[0]||null;          // Home -> sel pertama baris
+      else if(colStep===Number.POSITIVE_INFINITY)target=row[row.length-1]||null; // End -> sel terakhir baris
+      else if(rowStep){
+        const nextRow=grid[rowIndex+rowStep];
+        if(nextRow&&nextRow.length)target=nextRow[Math.min(colIndex,nextRow.length-1)]||null;
+      }else if(colStep){
+        target=row[colIndex+colStep]||null;
+      }
+      return target?focusScoreInput(target,true):false;
+    }
+    function jumpScoreRowEdge(input,direction){
+      const info=scoreGrid(input);if(!info)return false;
+      const {grid,rowIndex,colIndex}=info;
+      commitScoreValue(input);
+      const row=direction<0?grid[0]:grid[grid.length-1];
+      if(!row||!row.length)return false;
+      const target=row[Math.min(colIndex,row.length-1)]||null;
+      return target?focusScoreInput(target,true):false;
+    }
+    function revealScoreInput(input){
+      const shell=input.closest('[data-score-scroll-body]');
+      if(!shell)return;
+      const rect=input.getBoundingClientRect(),shellRect=shell.getBoundingClientRect();
+      const sticky=$('.sticky-name',input.closest('tr'));
+      const leftLimit=shellRect.left+(sticky?sticky.getBoundingClientRect().width:0)+4;
+      if(rect.left<leftLimit)shell.scrollLeft=Math.max(0,shell.scrollLeft-(leftLimit-rect.left));
+      else if(rect.right>shellRect.right-4)shell.scrollLeft+=rect.right-(shellRect.right-4);
+      if(rect.top<shellRect.top)shell.scrollTop=Math.max(0,shell.scrollTop-(shellRect.top-rect.top)-8);
+      else if(rect.bottom>shellRect.bottom)shell.scrollTop+=rect.bottom-shellRect.bottom+8;
+      // Slider horizontal ada di toolbar (bukan induk langsung shell), jadi dicari lebih luas.
+      const slider=$(`[data-score-range="${shell.dataset.scoreScrollBody}"]`,shell.closest('section')||document);
+      if(slider&&slider._refreshScoreSlider)slider._refreshScoreSlider();
+    }
+    function scrollScoreInputIntoView(input){revealScoreInput(input);}
+    function handleScoreKeydown(event){
+        const input=event.target;
+        if(!input||!input.matches||!input.matches('input.score-input[data-score-kind]'))return;
+        if(event.isComposing||event.altKey)return;
+        const key=event.key,jump=event.ctrlKey||event.metaKey;
+        if(key==='Enter'){event.preventDefault();moveScoreFocus(input,event.shiftKey?-1:1);return;}
+        if(key==='Tab'){return;}
+        if(key==='ArrowUp'||key==='ArrowDown'){
+          event.preventDefault();
+          const dir=key==='ArrowDown'?1:-1;
+          const moved=jump?jumpScoreRowEdge(input,dir):moveScoreFocusBy(input,dir,0);
+          if(!moved)input.select();
+          return;
+        }
+        if(key==='ArrowLeft'||key==='ArrowRight'){
+          const step=key==='ArrowLeft'?-1:1;
+          const pos=input.selectionStart??input.value.length;
+          const endPos=input.selectionEnd??pos;
+          const hasSelection=endPos>pos;
+          const atEdge=step<0?(pos===0&&endPos===0):(pos>=input.value.length&&endPos>=input.value.length);
+          // Kursor masih bisa bergerak di dalam angka -> biarkan perilaku bawaan.
+          if(!hasSelection&&!atEdge&&!jump)return;
+          event.preventDefault();
+          const moved=moveScoreFocusBy(input,0,step);
+          if(!moved)input.select();
+          return;
+        }
+        if(key==='Home'||key==='End'){
+          event.preventDefault();
+          moveScoreFocusBy(input,0,key==='Home'?Number.NEGATIVE_INFINITY:Number.POSITIVE_INFINITY);
+          return;
+        }
+        if(key==='PageUp'||key==='PageDown'){
+          event.preventDefault();
+          moveScoreFocusBy(input,key==='PageDown'?10:-10,0);
+        }
+      }
+
     function applyScorePaste(input,text){
       const lines=String(text||'').replace(/\r\n?/g,'\n').split('\n');
       while(lines.length&&lines[lines.length-1].trim()==='')lines.pop();
@@ -578,7 +669,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       $('#saveHomeroomButton').addEventListener('click',saveHomerooms);$('#unlockHomeroomButton').addEventListener('click',unlockHomerooms);$('#saveAdminCredentialsButton').addEventListener('click',saveAdminCredentials);$('#saveAppearanceButton').addEventListener('click',saveAppearance);$('#clearLoginBackgroundButton').addEventListener('click',clearLoginBackground);$('#resetApplicationButton').addEventListener('click',resetApplication);$('#loginBackgroundFile').addEventListener('change',previewLoginBackgroundFile);$('#appTheme').addEventListener('change',()=>applyAppearance({theme:$('#appTheme').value,loginBackgroundDataUri:state.appearance.loginBackgroundDataUri}));$('#saveAboutButton').addEventListener('click',saveAbout);$('#applyAboutTemplateButton').addEventListener('click',applyAboutTemplate);$('#createUserButton').addEventListener('click',createUser);$('#cancelEditUserButton').addEventListener('click',resetUserEditor);$('#usersTableBody').addEventListener('click',event=>{const edit=event.target.closest('[data-edit-user]');if(edit){beginEditUser(edit.dataset.editUser);return;}const remove=event.target.closest('[data-delete-user]');if(remove){deleteUserAccount(remove.dataset.deleteUser);return;}const button=event.target.closest('[data-toggle-user]');if(button)toggleUser(button);});
       $('#saveStudentsButton').addEventListener('click',saveStudents);$('#deleteStudentsButton').addEventListener('click',openBulkDeleteStudentsModal);$('#studentsClassSelect').addEventListener('change',switchStudentsClass);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;studentsDirty=true;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;confirmRemoveStudent(student);});
       injectScoreStyles();
-      document.addEventListener('keydown',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input.score-input[data-score-kind]'))return;if(event.key==='Enter'){event.preventDefault();moveScoreFocus(input,1);}});
+      document.addEventListener('keydown',handleScoreKeydown);
       document.addEventListener('paste',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input.score-input[data-score-kind]'))return;const clip=event.clipboardData||window.clipboardData||null;const text=clip&&typeof clip.getData==='function'?String(clip.getData('text')):'';if(text==='')return;event.preventDefault();applyScorePaste(input,text);});
       $('#saveFormativeButton').addEventListener('click',saveFormative);$('#saveSummativeButton').addEventListener('click',saveSummative);['formativeTableWrap','summativeTableWrap','waliFormativeWrap','waliSummativeWrap'].forEach(id=>{$('#'+id).addEventListener('click',event=>{const button=event.target.closest('[data-score-scroll-shift]');if(button)shiftScoreTable(button);});});document.addEventListener('input',event=>{const input=event.target;if(input&&input.matches&&input.matches('input[data-score-kind]'))updateScoreInput(input);});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('.student-name-input'))studentsDirty=true;});document.addEventListener('input',event=>{const field=event.target;if(field&&field.matches&&field.matches('#teacherName,#teacherNip,#formativeWeight,#summativeWeight,.material-title,textarea[data-objective-material]'))identityDirty=true;});document.addEventListener('change',event=>{const input=event.target;if(!input||!input.matches||!input.matches('input[data-score-kind]'))return;if(input.value!==''){const n=toNumber(input.value);if(n!==null&&n>=0&&n<=100)input.value=String(round2(n));}updateScoreInput(input);});
       $('#exportExcelButton').addEventListener('click',exportExcel);$('#loadWaliCopyButton').addEventListener('click',loadWaliCopy);$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialsButton').addEventListener('click',copyWaliMaterials);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
