@@ -131,6 +131,18 @@
     // Ambil pengaturan desimal dari sebuah konteks/data (dikirim server) tanpa menimpanya bila kosong.
     // Pemilik/Admin: simpan pilihan desimal ke konteks identitas agar akun lain (wali kelas/guru)
     // yang membuka mapel & kelas yang sama ikut memakai pengaturan ini.
+    // Beberapa konteks yang sudah dikirim ulang pada sesi ini (agar tidak berulang).
+    const healedContexts={};
+    function healContextDecimals(context,decimals){
+      if(!isAdmin()&&!isGuru())return;
+      const key=contextDecimalKey(context);
+      if(!key||healedContexts[key]===decimals)return;
+      healedContexts[key]=decimals;
+      const payload={...context,decimals:Number(decimals)};
+      silentServer('saveContextDecimals',[state.sessionToken,payload],()=>{});
+      // Cadangan untuk server yang belum punya fungsi baru: simpan lewat identitas.
+      silentServer('saveContext',[state.sessionToken,{school:readSchoolForm(),context:payload}],()=>{});
+    }
     function persistContextDecimals(decimals,contextArg){
       // Pemilik/Admin dan guru pemilik mapel boleh menetapkan desimal; wali kelas tidak.
       if(!isAdmin()&&!isGuru())return;
@@ -155,8 +167,13 @@
       if(decimalsLookupKey===key)return;
       decimalsLookupKey=key;
       silentServer('getContextDecimals',[state.sessionToken,context],result=>{
-        const value=Number(result&&result.decimals);
-        if(DECIMAL_MODES.indexOf(value)===-1)return;
+        const remote=Number(result&&result.decimals);
+        let value=remote;
+        if(DECIMAL_MODES.indexOf(remote)===-1)value=storedContextDecimals(context);
+        const local=storedContextDecimals(context);
+        if(local!==null)value=local;
+        if(value===null||DECIMAL_MODES.indexOf(value)===-1)return;
+        if(local!==null&&remote!==local)healContextDecimals(context,local);
         rememberContextDecimals(context,value);
         if(currentAppearanceDecimals()===value)return;
         state.appearance={...(state.appearance||{}),decimals:value};
@@ -167,13 +184,21 @@
     }
     function adoptContextDecimals(data){
       const context=data||null;
-      let raw=context&&context.decimals;
-      let value=Number(raw);
-      if(raw===null||raw===undefined||raw===''||DECIMAL_MODES.indexOf(value)===-1){
-        // Server belum mengirim decimals: pakai ingatan per konteks di perangkat ini.
-        const remembered=storedContextDecimals(context);
-        if(remembered===null)return false;
-        value=remembered;
+      const raw=context&&context.decimals;
+      let serverValue=(raw===null||raw===undefined||raw==='')?null:Number(raw);
+      if(serverValue!==null&&DECIMAL_MODES.indexOf(serverValue)===-1)serverValue=null;
+      const local=storedContextDecimals(context);
+      let value;
+      if(local!==null){
+        // Pilihan yang dibuat pada perangkat ini untuk mapel+kelas ini adalah acuan.
+        // Server yang masih menyimpan nilai lama (mis. simpan sebelumnya gagal) tidak
+        // boleh mengembalikan tampilan ke desimal lain saat mapel dibuka lagi.
+        value=local;
+        if(serverValue!==local)healContextDecimals(context,local);
+      }else if(serverValue!==null){
+        value=serverValue;
+      }else{
+        return false;
       }
       rememberContextDecimals(context,value);
       if(currentAppearanceDecimals()===value)return false;
