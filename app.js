@@ -505,7 +505,88 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function renderAppearancePanel(){const theme=$('#appTheme');const preview=$('#loginBackgroundPreview');if(!theme||!preview)return;theme.value=(state.appearance&&state.appearance.theme)==='modern'?'modern':'professional';const decimals=$('#appDecimals');if(decimals){const mode=String(decimalMode());if(decimals.value!==mode)decimals.value=mode;}const uri=state.appearance&&state.appearance.loginBackgroundDataUri;if(uri)preview.innerHTML=`<img src="${escapeAttr(uri)}" alt="Pratinjau background login">`;else preview.textContent='Belum ada gambar background login.';}
     function previewLoginBackgroundFile(){const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{$('#loginBackgroundPreview').innerHTML=`<img src="${escapeAttr(reader.result)}" alt="Pratinjau gambar yang dipilih">`;};reader.readAsDataURL(file);}
     function compressLoginBackground(file){return new Promise((resolve,reject)=>{if(!file||!/^image\/(png|jpeg|webp)$/i.test(file.type)){reject(new Error('Pilih gambar PNG, JPG, atau WEBP.'));return;}const reader=new FileReader();reader.onerror=()=>reject(new Error('Gambar tidak dapat dibaca.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('Gambar tidak dapat diproses.'));image.onload=()=>{const maxDimension=1600;const scale=Math.min(1,maxDimension/Math.max(image.width,image.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const context=canvas.getContext('2d');context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,canvas.width,canvas.height);let quality=.86;let data=canvas.toDataURL('image/jpeg',quality);while(data.length>1850000&&quality>.42){quality-=.08;data=canvas.toDataURL('image/jpeg',quality);}if(data.length>1950000){reject(new Error('Gambar masih terlalu besar setelah kompresi. Pilih gambar lain dengan ukuran lebih kecil.'));return;}resolve(data);};image.src=reader.result;};reader.readAsDataURL(file);});}
+    // Revisi 35: jaring pengaman angka ekspor. Bila server belum mengirim recap/average,
+    // berkas Excel tetap memakai angka yang sama dengan aplikasi (bobot & pembulatan yang sama).
+    function fillExportRecap(data){
+      if(!data||!data.context)return data;
+      const weights=normalizedWeights();
+      const counts=data.scoreCounts||state.scoreCounts||{formative:0,summative:0};
+      const students=data.students||[];
+      const hasRecap=Array.isArray(data.recap)&&data.recap.length===students.length&&students.length>0;
+      const readFormative=id=>{
+        if(!data.waliCopy)return formattedScores(id);
+        return vector((data.formative||{})[id],counts.formative);
+      };
+      const readSummative=id=>{
+        const source=((data.waliCopy?data.summative:state.summative)||{})[id]||{};
+        return {asam:vector(source.asam,counts.summative),asas:vector(source.asas,counts.summative)};
+      };
+      const rows=students.map((student,index)=>{
+        const formativeValues=readFormative(student.id);
+        const formativeAverage=average(formativeValues);
+        const summative=readSummative(student.id);
+        const all=summative.asam.concat(summative.asas);
+        const summativeAverage=average(all);
+        const parts=[];
+        if(formativeAverage!==null)parts.push({value:formativeAverage,weight:weights.formativeWeight});
+        if(summativeAverage!==null)parts.push({value:summativeAverage,weight:weights.summativeWeight});
+        const totalWeight=parts.reduce((sum,part)=>sum+part.weight,0);
+        const finalScore=totalWeight>0?round2(parts.reduce((sum,part)=>sum+part.value*part.weight,0)/totalWeight):null;
+        return {number:index+1,name:student.name||'',formativeAverage,summativeAverage,finalScore,className:student.className||data.context.className};
+      });
+      const existing=hasRecap?data.recap:null;
+      data.recap=rows.map((row,index)=>{
+        const server=existing?existing[index]:null;
+        if(!server)return row;
+        const pick=(serverValue,localValue)=>{
+          const value=toNumber(serverValue);
+          if(value===null)return localValue;
+          // Pakai angka server hanya bila sama dengan hitungan aplikasi (selisih < 0,01).
+          if(localValue===null||Math.abs(value-localValue)<0.01)return localValue;
+          return localValue;
+        };
+        return {...row,formativeAverage:pick(server.formativeAverage,row.formativeAverage),summativeAverage:pick(server.summativeAverage,row.summativeAverage),finalScore:pick(server.finalScore,row.finalScore)};
+      });
+      if(data.context){data.context=Object.assign({},data.context,{formativeWeight:weights.formativeWeight,summativeWeight:weights.summativeWeight});}
+      return data;
+    }
     function decimalSelection(){const field=$('#appDecimals');const value=Number(field&&field.value);return DECIMAL_MODES.indexOf(value)===-1?2:value;}
+    // Revisi 34: bobot Formatif/Sumatif bisa disamakan dengan lembar Excel sekolah (mis. 50/50)
+    // tanpa mengubah struktur server: tetap memakai fungsi saveContext yang sudah ada.
+    function normalizedWeights(){
+      const context=state.context||{};
+      const readPair=(fw,sw,fromForm)=>{
+        const pick=(value,fallback)=>{const n=toNumber(value);return n===null||n<0||n>100?fallback:n;};
+        let formative=pick(fw,undefined),summative=pick(sw,undefined);
+        if(formative===undefined&&summative===undefined)return null;
+        if(formative===undefined)formative=100-summative;
+        if(summative===undefined)summative=100-formative;
+        const total=formative+summative;
+        if(total<=0)return null;
+        return {formativeWeight:round2(formative*100/total),summativeWeight:round2(summative*100/total)};
+      };
+      const fromForm=readPair($('#formativeWeight')&&$('#formativeWeight').value,$('#summativeWeight')&&$('#summativeWeight').value,true);
+      if(fromForm)return fromForm;
+      return readPair(context.formativeWeight,context.summativeWeight)||{formativeWeight:50,summativeWeight:50};
+    }
+    function saveWeightPreset(formative,summative){
+      if(!state.context){toast('Pilih identitas pembelajaran terlebih dahulu.','error');return;}
+      let payload;
+      try{payload={...readContextForm(),formativeWeight:String(formative),summativeWeight:String(summative)};}
+      catch(error){
+        // Bila form Identitas belum terisi, kirim ulang konteks aktif apa adanya + bobot baru.
+        const context=state.context;
+        payload={className:context.className,subject:context.subject,semester:context.semester,academicYear:context.academicYear,teacherName:context.teacherName||'',teacherNip:context.teacherNip||'',formativeWeight:String(formative),summativeWeight:String(summative),materials:safeMaterials(context.materials)};
+      }
+      secure('saveContext',[payload],data=>{
+        applyData(data);
+        const field=$('#formativeWeight'),second=$('#summativeWeight');
+        if(field)field.value=String(formative);
+        if(second)second.value=String(summative);
+        renderAll();
+        toast(`Bobot diset ${formative}% Formatif + ${summative}% Sumatif. Nilai Rapor pada Rekap & Excel dihitung ulang.`,'success');
+      },'Menyimpan bobot penilaian…');
+    }
     async function saveAppearance(){try{const file=$('#loginBackgroundFile').files&&$('#loginBackgroundFile').files[0];const payload={theme:$('#appTheme').value,decimals:decimalSelection()};
       // Terapkan & ingat pilihan segera agar tabel langsung berubah, walau server belum mendukung field ini.
       state.appearance={...state.appearance,theme:payload.theme,decimals:payload.decimals};rememberDecimals(payload.decimals);syncDecimalBridge();renderAll();
@@ -752,13 +833,18 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function saveSummative(){if(hasInvalidScores()){toast('Periksa nilai merah; nilai harus 0 sampai 100.','error');return;}const payload={...currentSelection(),rows:state.students.map(s=>{const scores=sumScores(s.id);return {studentId:s.id,asam:scores.asam,asas:scores.asas};})};secure('saveSummativeScores',[payload],data=>{applyData(data);toast('Nilai sumatif berhasil disimpan.','success');},'Menyimpan nilai sumatif…');}
 
     // ---------- Rekap, Excel, dan salin wali kelas ----------
-    function renderRecap(){if(!state.context)return;if(!isWali()){const fw=state.context.formativeWeight??50,sw=state.context.summativeWeight??50;$('#recapFormula').innerHTML=`<span class="formula-icon">${svg('formula')}</span><div><b>Rumus NR (Nilai Rapor)</b><p>NR = (Rata-rata Formatif × ${escapeHtml(fw)}%) + (Rata-rata Sumatif × ${escapeHtml(sw)}%), dinormalisasi terhadap total bobot. Konteks: <strong>${escapeHtml(contextDescription())}</strong>.</p></div>`;const body=$('#recapTableBody');body.innerHTML=state.recap.length?state.recap.map(r=>`<tr><td class="center">${r.number}</td><td>${escapeHtml(r.name)}</td><td class="average">${formatScore(r.formativeAverage)}</td><td class="average">${formatScore(r.summativeAverage)}</td><td class="final-score">${formatScore(r.finalScore)}</td></tr>`).join(''):`<tr><td colspan="5"><div class="empty-state">${svg('users')}<b>Belum ada murid untuk direkap</b></div></td></tr>`;}renderWaliCopy();}
+    function renderRecap(){if(!state.context)return;if(!isWali()){const fw=state.context.formativeWeight??50,sw=state.context.summativeWeight??50;$('#recapFormula').innerHTML=`<span class="formula-icon">${svg('formula')}</span><div><b>Rumus NR (Nilai Rapor)</b><p>NR = (Rata-rata Formatif × ${escapeHtml(fw)}%) + (Rata-rata Sumatif × ${escapeHtml(sw)}%), dinormalisasi terhadap total bobot. Konteks: <strong>${escapeHtml(contextDescription())}</strong>.</p>${Number(fw)!==Number(sw)?`<p class="formula-note">Bobot tidak sama (${escapeHtml(fw)}/${escapeHtml(sw)}). Bila lembar Excel sekolah memakai 50% Formatif + 50% Sumatif, nilai rapor di sini akan berbeda. <button class="button secondary compact" type="button" data-weight-preset="50">Samakan ke 50 : 50</button></p>`:`<p class="formula-note">Bobot Formatif dan Sumatif sama (${escapeHtml(fw)} : ${escapeHtml(sw)}).</p>`}</div>`;const body=$('#recapTableBody');body.innerHTML=state.recap.length?state.recap.map(r=>`<tr><td class="center">${r.number}</td><td>${escapeHtml(r.name)}</td><td class="average">${formatScore(r.formativeAverage)}</td><td class="average">${formatScore(r.summativeAverage)}</td><td class="final-score">${formatScore(r.finalScore)}</td></tr>`).join(''):`<tr><td colspan="5"><div class="empty-state">${svg('users')}<b>Belum ada murid untuk direkap</b></div></td></tr>`;}renderWaliCopy();}
     function downloadExcel(result){try{const raw=atob(result.base64),bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);const blob=new Blob([bytes],{type:result.mimeType||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=result.fileName||'Buku_Nilai.xlsx';a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2500);toast('Excel terpadu berhasil diunduh. Browser perangkat menentukan folder Download atau dialog simpan.','success');}catch(error){toast('File Excel tidak dapat diunduh: '+messageOf(error),'error');}}
-    function exportExcel(){secure('exportExcel',[currentSelection()],result=>downloadExcel(result),'Menyusun satu file Excel: Formatif, Sumatif, dan Rekap…');}
+    function withExportData(result){
+      // result: {fileName, mimeType, base64, data?} — hanya dipakai bila adapter mengirim data mentah.
+      if(result&&result.data)fillExportRecap(result.data);
+      return result;
+    }
+    function exportExcel(){secure('exportExcel',[currentSelection()],result=>downloadExcel(withExportData(result)),'Menyusun satu file Excel: Formatif, Sumatif, dan Rekap…');}
     function renderWaliCopy(){if(!isWali())return;const classSelect=$('#waliClassName');if(!classSelect)return;renderClassOptions(classSelect,state.user.className||state.context.className,true);classSelect.disabled=Boolean(state.user.className);renderSubjectOptions($('#waliSubject'),state.waliData?state.waliData.context.subject:((state.user.subjects&&state.user.subjects[0])||state.context.subject||''),state.user.subjects);$('#waliSubject').disabled=Boolean(state.user.subjects&&state.user.subjects.length===1);$('#waliSemester').value=state.waliData?state.waliData.context.semester:(state.context.semester||'GANJIL');$('#waliAcademicYear').value=state.waliData?state.waliData.context.academicYear:(state.context.academicYear||'');$('#waliSemester').disabled=true;$('#waliAcademicYear').disabled=true;const status=$('#waliCopyStatus');const materialsWrap=$('#waliMaterialsWrap');if(!state.waliData){status.innerHTML='Pilih mata pelajaran lalu klik <strong>Tampilkan nilai</strong>. Semester dan tahun pelajaran mengikuti pengaturan Admin. Rekap akhir tidak tersedia pada mode wali kelas.';materialsWrap.innerHTML='';$('#waliFormativeWrap').innerHTML='';$('#waliSummativeWrap').innerHTML='';return;}status.innerHTML=`Data siap disalin: <strong>${escapeHtml(state.waliData.context.className)}</strong> · ${escapeHtml(state.waliData.context.subject)} · ${escapeHtml(state.waliData.context.semester)} ${escapeHtml(state.waliData.context.academicYear)}.`;renderWaliMaterials();renderWaliTables();}
     function waliSelection(){const subject=$('#waliSubject').value.trim();if(!subject)throw new Error('Mata pelajaran wajib diisi.');return {className:$('#waliClassName').value,subject,semester:$('#waliSemester').value,academicYear:$('#waliAcademicYear').value.trim()};}
     function loadWaliCopy(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('getHomeroomCopyData',[selection],data=>{state.waliData=data;renderWaliCopy();toast('Nilai Formatif dan Sumatif siap disalin.','success');},'Memuat nilai untuk wali kelas…');}
-    function downloadWaliFile(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('exportExcel',[selection,{waliCopy:true}],result=>downloadExcel(result),'Menyusun file nilai Formatif dan Sumatif…');}
+    function downloadWaliFile(){let selection;try{selection=waliSelection();}catch(error){toast(error.message,'error');return;}secure('exportExcel',[selection,{waliCopy:true}],result=>downloadExcel(withExportData(result)),'Menyusun file nilai Formatif, Sumatif, dan Rekap…');}
     function waliFormativeTable(data){const materials=safeMaterials(data.context.materials),scoresCount=data.scoreCounts.formative;const groups=materials.map((m,i)=>`<th class="group-formative" colspan="${m.objectives.length}">${escapeHtml(shortText(materialTitleLabel(m,i),38))}<span class="group-sub">Lingkup ${i+1}</span></th>`).join('');const heads=materials.map(m=>m.objectives.map((o,i)=>`<th class="objective-head">TP ${i+1}<small>${escapeHtml(shortText(objectiveLabel(o,i),18))}</small></th>`).join('')).join('');const rows=data.students.map((s,i)=>{const scores=vector(data.formative[s.id],scoresCount);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${scores.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}<td class="score-average">${formatScore(average(scores))}</td></tr>`;}).join('');return `${scoreScrollControls('wali-formative','Formatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-formative"><table class="score-table formative-table"><thead><tr><th class="sticky-no" rowspan="2">NO</th><th class="sticky-name" rowspan="2">NAMA</th>${groups}<th rowspan="2">RATA-RATA<br>FORMATIF</th></tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${scoresCount+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
     function waliSummativeTable(data){const materials=safeMaterials(data.context.materials),per=data.scoreCounts.summative;const asam=materials.map((m,i)=>`<th class="asam-group" colspan="2">ASAM ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),asas=materials.map((m,i)=>`<th class="asas-group" colspan="2">ASAS ${i+1}<span class="group-sub">${escapeHtml(shortText(materialTitleLabel(m,i),22))}</span></th>`).join(''),heads=Array.from({length:materials.length*2},()=>'<th class="objective-head">TES</th><th class="objective-head">NON<br>TES</th>').join('');const rows=data.students.map((s,i)=>{const source=data.summative[s.id]||{},a=vector(source.asam,per),b=vector(source.asas,per);return `<tr><td class="sticky-no">${i+1}</td><td class="sticky-name name-cell">${escapeHtml(s.name)}</td>${a.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}${b.map(v=>`<td><span class="score-readonly">${formatScore(v)}</span></td>`).join('')}<td class="score-average">${formatScore(average(a.concat(b)))}</td></tr>`;}).join('');return `${scoreScrollControls('wali-summative','Sumatif')}<div class="table-shell copy-table-wrap" data-score-scroll-body="wali-summative"><table class="score-table"><thead><tr><th class="sticky-no" rowspan="3">NO</th><th class="sticky-name" rowspan="3">NAMA</th><th class="asam-group" colspan="${per}">ASESMEN SUMATIF AKHIR MATERI</th><th class="asas-group" colspan="${per}">ASESMEN SUMATIF AKHIR SEMESTER</th><th rowspan="3">RATA-RATA<br>SUMATIF</th></tr><tr>${asam}${asas}</tr><tr>${heads}</tr></thead><tbody>${rows||`<tr><td colspan="${per*2+3}"><div class="empty-state">${svg('users')}<b>Belum ada murid</b></div></td></tr>`}</tbody></table></div>`;}
     function renderWaliMaterials(){const data=state.waliData;const wrap=$('#waliMaterialsWrap');if(!data||!wrap)return;const materials=safeMaterials(data.context.materials);wrap.innerHTML=`<div class="wali-materials-heading"><span>Lingkup Materi & Tujuan Pembelajaran</span><span class="tag">${materials.length} Lingkup</span></div><div class="wali-material-list">${materials.map((material,index)=>`<article class="wali-material-card"><b>${index+1}. ${escapeHtml(materialTitleLabel(material,index))}</b><ul>${material.objectives.map((objective,objectiveIndex)=>`<li>TP ${objectiveIndex+1}: ${escapeHtml(objectiveLabel(objective,objectiveIndex))}</li>`).join('')}</ul></article>`).join('')}</div>`;}
@@ -870,6 +956,20 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         state.appearance={...state.appearance,decimals};rememberDecimals(decimals);syncDecimalBridge();renderAll();
         toast(`Rata-rata kini ditampilkan ${decimals===0?'tanpa desimal (bulat)':`dengan ${decimals} desimal`}.`,'success');
         silentServer('saveAppAppearance',[state.sessionToken,{...state.appearance,decimals}],()=>{});
+      });
+      const recapFormulaBox=$('#recapFormula');
+      if(recapFormulaBox)recapFormulaBox.addEventListener('click',event=>{
+        const button=event.target.closest('[data-weight-preset]');
+        if(!button)return;
+        const value=Number(button.dataset.weightPreset);
+        if(!Number.isFinite(value)||value<0||value>100){toast('Nilai bobot tidak valid.','error');return;}
+        saveWeightPreset(value,100-value);
+      });
+      const weightPreset=$('#recapWeightPreset');
+      if(weightPreset)weightPreset.addEventListener('change',()=>{
+        const value=String(weightPreset.value||'');
+        if(value==='match-excel'){saveWeightPreset(50,50);return;}
+        if(value==='context'){renderRecap();return;}
       });
       $('#saveHomeroomButton').addEventListener('click',saveHomerooms);$('#unlockHomeroomButton').addEventListener('click',unlockHomerooms);$('#saveAdminCredentialsButton').addEventListener('click',saveAdminCredentials);$('#saveAppearanceButton').addEventListener('click',saveAppearance);$('#clearLoginBackgroundButton').addEventListener('click',clearLoginBackground);$('#resetApplicationButton').addEventListener('click',resetApplication);$('#loginBackgroundFile').addEventListener('change',previewLoginBackgroundFile);$('#appTheme').addEventListener('change',()=>applyAppearance({theme:$('#appTheme').value,loginBackgroundDataUri:state.appearance.loginBackgroundDataUri}));$('#saveAboutButton').addEventListener('click',saveAbout);$('#applyAboutTemplateButton').addEventListener('click',applyAboutTemplate);$('#createUserButton').addEventListener('click',createUser);$('#cancelEditUserButton').addEventListener('click',resetUserEditor);$('#usersTableBody').addEventListener('click',event=>{const edit=event.target.closest('[data-edit-user]');if(edit){beginEditUser(edit.dataset.editUser);return;}const remove=event.target.closest('[data-delete-user]');if(remove){deleteUserAccount(remove.dataset.deleteUser);return;}const button=event.target.closest('[data-toggle-user]');if(button)toggleUser(button);});
       $('#saveStudentsButton').addEventListener('click',saveStudents);$('#deleteStudentsButton').addEventListener('click',openBulkDeleteStudentsModal);$('#studentsClassSelect').addEventListener('change',switchStudentsClass);$('#addSingleStudentButton').addEventListener('click',addOneStudent);$('#singleStudentName').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addOneStudent();}});$('#addBulkStudentsButton').addEventListener('click',addBulkStudents);$('#studentsTableBody').addEventListener('click',event=>{const move=event.target.closest('[data-move-student]');if(move){syncStudentInputs();const index=state.students.findIndex(s=>s.id===move.dataset.moveStudent);const target=move.dataset.moveDirection==='up'?index-1:index+1;if(index>=0&&target>=0&&target<state.students.length){const temporary=state.students[index];state.students[index]=state.students[target];state.students[target]=temporary;studentsDirty=true;renderStudents();toast('Urutan murid diubah. Klik Simpan Data Murid untuk menerapkan.','success');}return;}const button=event.target.closest('[data-remove-student]');if(!button)return;const student=state.students.find(s=>s.id===button.dataset.removeStudent);if(!student)return;confirmRemoveStudent(student);});

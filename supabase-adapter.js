@@ -119,7 +119,13 @@
     }
 
     if (method === 'exportExcel') {
-      return buildExcel(list);
+      // Selalu sertakan pengaturan desimal agar berkas Excel sama dengan tampilan aplikasi.
+      var decimals = (typeof window !== 'undefined' && window.__bnDecimals !== undefined) ? window.__bnDecimals : 2;
+      var withOptions = list.concat([{ decimals: decimals }]);
+      return buildExcel(withOptions).catch(function (error) {
+        // Server lama hanya menerima (sessionToken, selection[, opsi]) — ulangi tanpa argumen tambahan.
+        return buildExcel(list);
+      });
     }
 
     return rpc(method, list);
@@ -227,6 +233,16 @@
     const digits = Number(raw);
     return [0, 1, 2].indexOf(digits) === -1 ? 2 : digits;
   }
+  // Nama worksheet harus unik di dalam satu workbook.
+  function uniqueSheetName(wb, base) {
+    var name = String(base || 'SHEET').replace(/[\\*\?\:\[\]\/]/g, '-').slice(0, 31);
+    var existing = (wb && (wb.sheets || wb._sheets)) || [];
+    var taken = existing.map(function (sheet) { return String(sheet && sheet.name || '').toUpperCase(); });
+    if (taken.indexOf(name.toUpperCase()) === -1) return name;
+    var counter = 2;
+    while (taken.indexOf((name.slice(0, 28) + ' ' + counter).toUpperCase()) !== -1) counter += 1;
+    return name.slice(0, 28) + ' ' + counter;
+  }
   function roundScore(value, digits) {
     if (value === null || value === undefined || value === '' || !isFinite(Number(value))) return value;
     const factor = Math.pow(10, digits);
@@ -248,18 +264,38 @@
   }
 
   function buildExcel(args) {
-    const bundle = rpc('exportExcel', args);
+    const list = (args || []).slice();
+    const forcedDecimals = (function () {
+      for (var i = list.length - 1; i >= 0; i -= 1) {
+        var item = list[i];
+        if (item && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, 'decimals')) {
+          var value = Number(item.decimals);
+          if ([0, 1, 2].indexOf(value) !== -1) {
+            list.splice(i, 1);
+            return value;
+          }
+        }
+      }
+      return null;
+    })();
+    const bundle = rpc('exportExcel', list);
     return bundle.then(function (data) {
       if (!data || !data.context) throw new Error('Data ekspor tidak lengkap dari server.');
       // Jumlah desimal mengikuti pengaturan aplikasi (appearance.decimals) bila server belum mengirimkannya.
-      if (!data.appearance && window.__bnDecimals) data.appearance = { decimals: window.__bnDecimals };
+      const fallbackDecimals = forcedDecimals !== null ? forcedDecimals : window.__bnDecimals;
+      if (!data.appearance && fallbackDecimals !== undefined) data.appearance = { decimals: fallbackDecimals };
+      if (data.appearance && (data.appearance.decimals === undefined || data.appearance.decimals === null) && fallbackDecimals !== undefined) {
+        data.appearance = Object.assign({}, data.appearance, { decimals: fallbackDecimals });
+      }
       const workbook = composeWorkbook(data);
 
       const bytes = workbook.build();
       const result = {
         fileName: data.fileName || 'Buku_Nilai.xlsx',
         mimeType: MIME_XLSX,
-        base64: xlsx().toBase64(bytes)
+        base64: xlsx().toBase64(bytes),
+        // data mentah dikirim balik agar app.js dapat menyelaraskan angka (rekap) bila perlu.
+        data: { context: data.context, recap: data.recap, appearance: data.appearance, waliCopy: Boolean(data.waliCopy) }
       };
 
       if (SUPABASE_CONFIG.archiveExports) {
@@ -281,7 +317,9 @@
     if (!waliCopy) buildStudentsSheet(wb, data);
     buildFormativeSheet(wb, data);
     buildSummativeSheet(wb, data);
-    if (includeRecap) buildRecapSheet(wb, data);
+    // Rekap (Nilai Rapor) selalu disertakan; pada ekspor wali kelas judulnya dibedakan.
+    if (includeRecap) buildRecapSheet(wb, data, false);
+    if (waliCopy) buildRecapSheet(wb, data, true);
 
     return wb;
   }
@@ -556,12 +594,13 @@
   }
 
   // ---- Lembar 5: REKAP NA --------------------------------------------------
-  function buildRecapSheet(wb, data) {
+  function buildRecapSheet(wb, data, waliCopy) {
+    const sheetName = uniqueSheetName(wb, waliCopy ? 'REKAP NA (WALI)' : 'REKAP NA');
     const DIGITS = exportDigits(data);
     const NUMFMT = DIGITS === 0 ? '0' : (DIGITS === 1 ? '0.0' : '0.00');
     const RAW_NUMFMT = '0.##';
     const context = data.context || {};
-    const sheet = wb.addWorksheet('REKAP NA', { tabColor: COLOR.recapTab, gridlines: false });
+    const sheet = wb.addWorksheet(sheetName, { tabColor: COLOR.recapTab, gridlines: false });
 
     sheet.set(1, 1, 'REKAP NILAI AKHIR',
       { bold: true, size: 16, color: COLOR.white, fill: COLOR.navy, align: 'center' });
