@@ -1015,15 +1015,16 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       });
       return rows;
     }
-    // Satu kolom per baris: aman ditempel ke Excel (1 kolom, tidak berhamburan) maupun Word.
-    function waliMaterialTitlesText(){const data=state.waliData;if(!data)return '';return waliMaterialTitles(data).map((title,index)=>`${index+1}. ${title}`).join('\r\n');}
-    function waliObjectivesText(){const data=state.waliData;if(!data)return '';return waliObjectives(data).map(row=>`${row.material} - ${row.label}: ${row.text}`).join('\r\n');}
+    // Satu kolom per baris, tanpa nomor dan tanpa nama materi:
+    // teks TP semua lingkup materi digabung urut, berupa kalimat utuh (aman di Excel & Word).
+    function waliMaterialTitlesText(){const data=state.waliData;if(!data)return '';return waliMaterialTitles(data).map(title=>String(title||'').trim()).filter(Boolean).join('\r\n');}
+    function waliObjectivesText(){const data=state.waliData;if(!data)return '';return waliObjectives(data).map(row=>String(row.text||'').trim()).filter(Boolean).join('\r\n');}
     function copyWaliMaterialTitles(){
       if(!state.waliData){toast('Tampilkan nilai terlebih dahulu.','error');return;}
       const total=waliMaterialTitles(state.waliData).length;
       if(!total){toast('Belum ada lingkup materi untuk disalin.','error');return;}
       writeClipboard(waliMaterialTitlesText())
-        .then(()=>toast(`${total} lingkup materi berhasil disalin (satu kolom, siap tempel ke Excel/Word).`,'success'))
+        .then(()=>toast(`${total} lingkup materi berhasil disalin tanpa nomor (satu kolom, siap tempel ke Excel/Word).`,'success'))
         .catch(error=>toast('Lingkup materi tidak dapat disalin: '+messageOf(error),'error'));
     }
     function copyWaliObjectives(){
@@ -1031,7 +1032,7 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       const total=waliObjectives(state.waliData).length;
       if(!total){toast('Belum ada tujuan pembelajaran untuk disalin.','error');return;}
       writeClipboard(waliObjectivesText())
-        .then(()=>toast(`${total} tujuan pembelajaran berhasil disalin (satu kolom, siap tempel ke Excel/Word).`,'success'))
+        .then(()=>toast(`${total} tujuan pembelajaran berhasil disalin tanpa nomor (satu kolom, siap tempel ke Excel/Word).`,'success'))
         .catch(error=>toast('Tujuan pembelajaran tidak dapat disalin: '+messageOf(error),'error'));
     }
 
