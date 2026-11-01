@@ -707,20 +707,33 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       });
       return {title:'NILAI SUMATIF',description:source.description,headers,rows};
     }
-    // Tab-separated: kolom tetap lurus saat ditempel ke Excel (tiap sel 1 kolom) maupun Word.
+    // Yang disalin HANYA nilai TES & NON TES (tanpa judul, header, NO/NAMA, dan rata-rata).
+    // Tab-separated: setiap nilai jatuh di kolomnya sendiri saat ditempel ke Excel maupun Word.
+    function scoreValueGrid(kind,data){
+      const source=scoreSource(data);
+      if(!source)return [];
+      const materials=safeMaterials(source.context.materials);
+      if(kind==='formative'){
+        const columnCount=materials.reduce((total,material)=>total+Math.max(1,material.objectives.length),0);
+        return source.students.map(student=>source.readFormative(student.id).slice(0,columnCount).map(copyCellText));
+      }
+      return source.students.map(student=>{
+        const scores=source.readSummative(student.id);
+        return scores.asam.concat(scores.asas).map(copyCellText);
+      });
+    }
     function scoreCopyText(kind,data){
-      const {title,description,headers,rows}=scoreMatrix(kind,data);
-      if(!headers.length)return '';
-      const lines=[[`${title} - ${description}`],[],headers,...rows];
-      return lines.map(row=>row.map(cell=>String(cell==null?'':cell).replace(/[\t\r\n]+/g,' ')).join('\t')).join('\r\n');
+      return scoreValueGrid(kind,data)
+        .map(row=>row.map(cell=>String(cell==null?'':cell).replace(/[\t\r\n]+/g,' ')).join('\t'))
+        .join('\r\n');
     }
     function copyScoreTable(kind,data){
       const source=scoreSource(data);
       if(!source){toast('Pilih identitas pembelajaran terlebih dahulu.','error');return;}
       if(!source.students.length){toast('Belum ada data murid untuk disalin.','error');return;}
-      const {title}=scoreMatrix(kind,data);
+      const label=kind==='formative'?'formatif':'sumatif';
       writeClipboard(scoreCopyText(kind,data))
-        .then(()=>toast(`${title} (NO, NAMA, TES, NON TES, rata-rata) berhasil disalin: tempel ke Excel/Word.`,'success'))
+        .then(()=>toast(`Nilai ${label} (TES & NON TES saja, tanpa judul/header/nama) berhasil disalin.`,'success'))
         .catch(error=>toast('Nilai tidak dapat disalin: '+messageOf(error),'error'));
     }
     function copyScoreValue(value){return value===null||typeof value==='undefined'||Number.isNaN(Number(value))?'':formatScore(value);}
