@@ -671,8 +671,13 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function renderSubjectOptions(select,selected,allowedSubjects){const source=Array.isArray(allowedSubjects)&&allowedSubjects.length?allowedSubjects:(state.subjects||[]);const subjects=Array.from(new Set([selected].concat(source).filter(Boolean)));select.innerHTML=subjects.map(subject=>`<option value="${escapeAttr(subject)}">${escapeHtml(subject)}</option>`).join('');select.value=selected||subjects[0]||'';}
     function renderIdentity(){
       if(!state.context)return;
-      const s=state.school,c=state.context;const teacherSubjects=isGuru()&&Array.isArray(state.user.subjects)&&state.user.subjects.length?state.user.subjects:state.subjects;applySchoolFieldHint('#schoolName',s.schoolName);applySchoolFieldHint('#schoolStatus',s.schoolStatus);applySchoolFieldHint('#schoolAddress',s.address);applySchoolFieldHint('#schoolVillage',s.village);applySchoolFieldHint('#schoolDistrict',s.district);applySchoolFieldHint('#schoolCity',s.city);applySchoolFieldHint('#schoolProvince',s.province);$('#teacherName').value=c.teacherName||'';$('#teacherNip').value=c.teacherNip||'';renderSubjectOptions($('#mapelName'),c.subject||'',teacherSubjects);$('#semester').value=c.semester||'GANJIL';$('#academicYear').value=c.academicYear||'';$('#formativeWeight').value=c.formativeWeight??50;$('#summativeWeight').value=c.summativeWeight??50;
-      renderClassOptions($('#className'),c.className,true);$('#mapelOptions').innerHTML=state.subjects.map(subject=>`<option value="${escapeAttr(subject)}"></option>`).join('');
+      // Jangan menimpa pilihan pengguna saat konteks baru sedang dimuat otomatis.
+      const keepSelection=contextAutoKey&&contextAutoKey!==[state.context.className,state.context.subject,state.context.semester,state.context.academicYear].join('|');
+      const s=state.school,c=state.context;const teacherSubjects=isGuru()&&Array.isArray(state.user.subjects)&&state.user.subjects.length?state.user.subjects:state.subjects;applySchoolFieldHint('#schoolName',s.schoolName);applySchoolFieldHint('#schoolStatus',s.schoolStatus);applySchoolFieldHint('#schoolAddress',s.address);applySchoolFieldHint('#schoolVillage',s.village);applySchoolFieldHint('#schoolDistrict',s.district);applySchoolFieldHint('#schoolCity',s.city);applySchoolFieldHint('#schoolProvince',s.province);$('#teacherName').value=c.teacherName||'';$('#teacherNip').value=c.teacherNip||'';
+      const formSubject=keepSelection?($('#mapelName').value||c.subject):(c.subject||'');
+      renderSubjectOptions($('#mapelName'),formSubject,teacherSubjects);
+      if(!keepSelection){$('#semester').value=c.semester||'GANJIL';$('#academicYear').value=c.academicYear||'';}$('#formativeWeight').value=c.formativeWeight??50;$('#summativeWeight').value=c.summativeWeight??50;
+      renderClassOptions($('#className'),keepSelection&&$('#className').value?$('#className').value:c.className,true);$('#mapelOptions').innerHTML=state.subjects.map(subject=>`<option value="${escapeAttr(subject)}"></option>`).join('');
       updateClassHomeroomHint();
       const admin=isAdmin();['schoolName','schoolStatus','schoolAddress','schoolVillage','schoolDistrict','schoolCity','schoolProvince','teacherName','teacherNip','formativeWeight','summativeWeight'].forEach(id=>{$('#'+id).disabled=!admin;});
       $('#saveContextButton').hidden=!admin;
@@ -686,6 +691,28 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     function addMaterial(){const materials=materialsFromDOM();if(materials.length>=12){toast('Maksimal 12 lingkup materi.','error');return;}materials.push({title:'',objectives:['']});renderMaterials(materials);}
     function readContextForm(){const className=$('#className').value,subject=$('#mapelName').value.trim();if(!className||!subject)throw new Error('Kelas dan mata pelajaran wajib diisi.');return {className,subject,semester:$('#semester').value,academicYear:$('#academicYear').value.trim(),teacherName:$('#teacherName').value.trim(),teacherNip:$('#teacherNip').value.trim(),formativeWeight:$('#formativeWeight').value,summativeWeight:$('#summativeWeight').value,materials:materialsFromDOM()};}
     function readSchoolForm(){const nilai=id=>{const el=$(id);const teks=el?el.value.trim():'';return teks||SCHOOL_DEFAULTS[id]||'';};return {schoolName:nilai('#schoolName'),schoolStatus:nilai('#schoolStatus'),address:nilai('#schoolAddress'),village:nilai('#schoolVillage'),district:nilai('#schoolDistrict'),city:nilai('#schoolCity'),province:nilai('#schoolProvince'),defaultSemester:$('#semester').value,defaultAcademicYear:$('#academicYear').value.trim()};}
+    // Identitas/Materi: begitu mapel (atau kelas/semester/tahun) dipilih, konteks itu
+    // langsung dimuat otomatis -> materi, TP, nilai Formatif, Sumatif, dan Rekap ikut berganti.
+    let contextAutoKey='';
+    function identityAutoLoad(){
+      const subject=$('#mapelName')?$('#mapelName').value.trim():'';
+      const className=$('#className')?$('#className').value:'';
+      const semester=$('#semester')?$('#semester').value:'';
+      const academicYear=$('#academicYear')?$('#academicYear').value.trim():'';
+      // Dropdown belum lengkap: jangan memuat & jangan memunculkan error.
+      if(!className||!subject||!academicYear||!state.sessionToken)return;
+      const key=[className,subject,semester,academicYear].join('|');
+      const current=state.context?[state.context.className,state.context.subject,state.context.semester,state.context.academicYear].join('|'):'';
+      if(key===current||key===contextAutoKey)return;
+      contextAutoKey=key;
+      apiRequest('getContextData',[state.sessionToken,{className,subject,semester,academicYear}])
+        .then(data=>{
+          identityDirty=false;
+          applyData(data);
+          toast(`Konteks ${subject} dimuat otomatis.`,'success');
+        })
+        .catch(error=>{contextAutoKey='';toast(messageOf(error),'error');});
+    }
     function loadContext(){let selection;try{selection=readContextForm();}catch(error){toast(error.message,'error');return;}secure('getContextData',[selection],data=>{identityDirty=false;applyData(data);},'Memuat konteks kelas dan mapel…');}
     function saveContext(){let context;try{context=readContextForm();}catch(error){toast(error.message,'error');return;}context={...context,decimals:contextDecimals()};secure('saveContext',[{school:readSchoolForm(),context}],data=>{identityDirty=false;applyData(data);toast('Identitas dan materi berhasil disimpan.','success');},'Menyimpan identitas dan materi…');}
 
@@ -1321,14 +1348,18 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
       const logo=$('#logoToggle');if(logo)logo.setAttribute('aria-expanded',String(!collapsed));
       syncSidebarUI();
     }
+    let eventsBound=false;
     function bindEvents(){
+      // Cegah pemasangan listener ganda (mis. DOMContentLoaded terpanggil dua kali).
+      if(eventsBound)return;
+      eventsBound=true;
       const menuButton=$('#menuToggle');if(menuButton)menuButton.addEventListener('click',toggleMobileMenu);
       const overlay=$('#sidebarOverlay');if(overlay)overlay.addEventListener('click',closeSidebar);
       const logoToggleButton=$('#logoToggle');if(logoToggleButton)logoToggleButton.addEventListener('click',event=>{if(isSmallScreen()){event.preventDefault();toggleMobileMenu();}else{toggleSidebar();}});
       document.addEventListener('keydown',event=>{if(event.key==='Escape'&&isSmallScreen()&&sidebarOpen())closeSidebar();});
       window.addEventListener('resize',()=>{const shell=$('#appShell');if(!shell)return;if(isSmallScreen()){if(!shell.classList.contains('mobile-menu-open'))shell.classList.add('sidebar-collapsed');}else{shell.classList.remove('mobile-menu-open');document.body.classList.remove('menu-locked');}syncSidebarUI();});
       $('#loginButton').addEventListener('click',login);$('#loginPassword').addEventListener('keydown',event=>{if(event.key==='Enter')login();});$('#toggleLoginPassword').addEventListener('click',toggleLoginPassword);$('#activateButton').addEventListener('click',activate);$('#logoutButton').addEventListener('click',logout);
-      $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>{showView(button.dataset.viewTarget);if(isSmallScreen())closeSidebar();}));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#className').addEventListener('change',handleIdentityClassChange);$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
+      $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>{showView(button.dataset.viewTarget);if(isSmallScreen())closeSidebar();}));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#className').addEventListener('change',handleIdentityClassChange);['mapelName','className','semester'].forEach(id=>{const field=$('#'+id);if(field)field.addEventListener('change',()=>{setTimeout(identityAutoLoad,0);});});const identityYear=$('#academicYear');if(identityYear)identityYear.addEventListener('input',()=>{clearTimeout(identityYear._bnTimer);identityYear._bnTimer=setTimeout(identityAutoLoad,600);});$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
       const decimalField=$('#appDecimals');
       if(decimalField)decimalField.addEventListener('change',()=>{
         // Langsung terapkan ke Formatif/Sumatif/Rekap, lalu simpan preferensi (perangkat + server).
@@ -1355,4 +1386,5 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
         if(id==='waliAcademicYear')field.addEventListener('input',()=>{clearTimeout(field._bnTimer);field._bnTimer=setTimeout(autoLoadWaliCopy,600);});
       });$('#copyWaliTableButton').addEventListener('click',copyWaliTable);$('#copyWaliMaterialTitlesButton').addEventListener('click',copyWaliMaterialTitles);$('#copyWaliObjectivesButton').addEventListener('click',copyWaliObjectives);$('#downloadWaliFileButton').addEventListener('click',downloadWaliFile);$$('[data-wali-tab]').forEach(button=>button.addEventListener('click',()=>{state.waliTab=button.dataset.waliTab;renderWaliTables();}));
     }
-    document.addEventListener('DOMContentLoaded',()=>{bindEvents();if(window.innerWidth<=820){$('#appShell').classList.add('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded','false');}bootstrap();});
+    let bootstrapped=false;
+    document.addEventListener('DOMContentLoaded',()=>{if(bootstrapped)return;bootstrapped=true;bindEvents();if(window.innerWidth<=820){$('#appShell').classList.add('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded','false');}bootstrap();});
