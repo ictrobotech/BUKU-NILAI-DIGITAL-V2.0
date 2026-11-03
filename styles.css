@@ -129,3 +129,8 @@ body.menu-locked{overflow:hidden}
   .menu-toggle span{display:none}
   .menu-toggle{padding:0;width:42px;justify-content:center}
 }
+
+/* Penanda versi build (memudahkan memastikan versi terbaru sudah termuat) */
+.build-note{display:inline-block;margin-top:4px;padding:2px 7px;border-radius:999px;
+  background:rgba(255,255,255,.12);color:rgba(255,255,255,.82);font-size:9px;font-weight:700;letter-spacing:.3px}
+.app-shell .side-footer .build-note{background:rgba(255,255,255,.14)}
