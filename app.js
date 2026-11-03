@@ -606,6 +606,7 @@ function secure(method,args,onSuccess,busyText){callServer(method,[state.session
       // (bila perangkat ini belum menyimpannya), supaya guru mapel & wali kelas ikut.
       if(storedGlobalDecimals()===null)fetchGlobalDecimals();state.classes=data.classes||[];state.classProfiles=data.classProfiles||[];state.subjects=data.subjects||[];state.students=data.students||[];state.formative=data.formative||{};state.summative=data.summative||{};state.recap=data.recap||[];state.scoreCounts=data.scoreCounts||{formative:0,summative:0};state.users=data.users||state.users||[];state.homeroomLocked=Boolean(data.homeroomLocked);if(data.appearance)applyAppearance(data.appearance,{keepDecimals:true});if(typeof data.aboutText==='string')state.aboutText=data.aboutText;
       $('#authScreen').hidden=true;$('#appShell').classList.remove('is-hidden');renderAll();startPresenceTimers();
+      if(isSmallScreen())closeSidebar();else syncSidebarUI();
     }
     function renderAll(){renderAccount();updateRoleUI();renderDecimalPicker();showView(state.activeView,false);}
     function renderView(name){if(name==='identity')renderIdentity();else if(name==='settings')renderSettings();else if(name==='students')renderStudents();else if(name==='formative')renderFormative();else if(name==='summative')renderSummative();else if(name==='recap')renderRecap();else if(name==='about')renderAbout();}
@@ -1278,10 +1279,56 @@ const allowed=isAdmin()?['identity','students','formative','summative','recap','
     }
 
     // ---------- Event ----------
-    function toggleSidebar(){const shell=$('#appShell'),collapsed=shell.classList.toggle('sidebar-collapsed');$('#logoToggle').setAttribute('aria-expanded',String(!collapsed));}
+    function toggleSidebar(){
+      // Di layar sempit, logo berfungsi seperti tombol Menu (buka/tutup sidebar).
+      if(isSmallScreen())toggleMobileMenu();else toggleSidebarDesktop();
+    }
+    // ---------- Menu navigasi di ponsel/tablet ----------
+    // Layar sempit: sidebar tersembunyi dan dibuka lewat tombol "Menu" (hamburger).
+    function isSmallScreen(){try{return window.matchMedia('(max-width:820px)').matches;}catch(error){return window.innerWidth<=820;}}
+    function sidebarOpen(){const shell=$('#appShell');return Boolean(shell&&!shell.classList.contains('sidebar-collapsed'));}
+    function syncSidebarUI(){
+      const shell=$('#appShell');
+      const button=$('#menuToggle');
+      const overlay=$('#sidebarOverlay');
+      const small=isSmallScreen();
+      const open=sidebarOpen();
+      if(button){
+        button.setAttribute('aria-expanded',String(open));
+        button.setAttribute('aria-label',open?'Tutup menu navigasi':'Buka menu navigasi');
+        button.title=open?'Tutup menu':'Buka menu';
+      }
+      if(overlay)overlay.hidden=!(small&&open);
+      if(shell)shell.classList.toggle('mobile-menu-open',small&&open);
+      document.body.classList.toggle('menu-locked',small&&open);
+    }
+    function openSidebar(){const shell=$('#appShell');if(!shell)return;if(isSmallScreen()){shell.classList.add('mobile-menu-open');shell.classList.remove('sidebar-collapsed');}else{shell.classList.remove('sidebar-collapsed');}syncSidebarUI();}
+    function closeSidebar(){const shell=$('#appShell');if(!shell)return;shell.classList.remove('mobile-menu-open');if(isSmallScreen())shell.classList.add('sidebar-collapsed');document.body.classList.remove('menu-locked');syncSidebarUI();}
+    function toggleMobileMenu(){
+      const shell=$('#appShell');
+      if(!shell)return;
+      if(isSmallScreen()){
+        if(sidebarOpen())closeSidebar();else openSidebar();
+        return;
+      }
+      // Layar lebar: perilaku lama tetap (tombol menyembunyikan/menampilkan sidebar).
+      toggleSidebarDesktop();
+    }
+    function toggleSidebarDesktop(){
+      const shell=$('#appShell');
+      if(!shell)return;
+      const collapsed=shell.classList.toggle('sidebar-collapsed');
+      const logo=$('#logoToggle');if(logo)logo.setAttribute('aria-expanded',String(!collapsed));
+      syncSidebarUI();
+    }
     function bindEvents(){
-      $('#loginButton').addEventListener('click',login);$('#loginPassword').addEventListener('keydown',event=>{if(event.key==='Enter')login();});$('#toggleLoginPassword').addEventListener('click',toggleLoginPassword);$('#activateButton').addEventListener('click',activate);$('#logoToggle').addEventListener('click',toggleSidebar);$('#logoutButton').addEventListener('click',logout);
-      $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>showView(button.dataset.viewTarget)));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#className').addEventListener('change',handleIdentityClassChange);$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
+      const menuButton=$('#menuToggle');if(menuButton)menuButton.addEventListener('click',toggleMobileMenu);
+      const overlay=$('#sidebarOverlay');if(overlay)overlay.addEventListener('click',closeSidebar);
+      const logoToggleButton=$('#logoToggle');if(logoToggleButton)logoToggleButton.addEventListener('click',event=>{if(isSmallScreen()){event.preventDefault();toggleMobileMenu();}else{toggleSidebar();}});
+      document.addEventListener('keydown',event=>{if(event.key==='Escape'&&isSmallScreen()&&sidebarOpen())closeSidebar();});
+      window.addEventListener('resize',()=>{const shell=$('#appShell');if(!shell)return;if(isSmallScreen()){if(!shell.classList.contains('mobile-menu-open'))shell.classList.add('sidebar-collapsed');}else{shell.classList.remove('mobile-menu-open');document.body.classList.remove('menu-locked');}syncSidebarUI();});
+      $('#loginButton').addEventListener('click',login);$('#loginPassword').addEventListener('keydown',event=>{if(event.key==='Enter')login();});$('#toggleLoginPassword').addEventListener('click',toggleLoginPassword);$('#activateButton').addEventListener('click',activate);$('#logoutButton').addEventListener('click',logout);
+      $$('.nav-item[data-view-target]').forEach(button=>button.addEventListener('click',()=>{showView(button.dataset.viewTarget);if(isSmallScreen())closeSidebar();}));$('#sidebarLogoutButton').addEventListener('click',logout);$('#loadContextButton').addEventListener('click',loadContext);$('#saveContextButton').addEventListener('click',saveContext);$('#className').addEventListener('change',handleIdentityClassChange);$('#addMaterialButton').addEventListener('click',addMaterial);$('#materialsBuilder').addEventListener('click',event=>{const button=event.target.closest('[data-material-action]');if(button)materialAction(button);});
       const decimalField=$('#appDecimals');
       if(decimalField)decimalField.addEventListener('change',()=>{
         // Langsung terapkan ke Formatif/Sumatif/Rekap, lalu simpan preferensi (perangkat + server).
